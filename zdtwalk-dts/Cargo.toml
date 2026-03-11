@@ -1,0 +1,9 @@
+[package]
+name = "zdtwalk-dts"
+version = "0.1.0"
+edition = "2021"
+description = "Device Tree Source (.dts/.dtsi) parser and serializer"
+
+[dependencies]
+nom = "7"
+thiserror = "2"

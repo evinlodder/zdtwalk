@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "zdtwalk",
+    "zdtwalk-dts",
+]
+resolver = "2"
