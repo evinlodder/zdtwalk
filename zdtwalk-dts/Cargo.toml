@@ -6,4 +6,6 @@ description = "Device Tree Source (.dts/.dtsi) parser and serializer"
 
 [dependencies]
 nom = "7"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
 thiserror = "2"

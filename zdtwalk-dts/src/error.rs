@@ -11,6 +11,9 @@ pub enum Error {
 
     #[error("Include resolution error: {0}")]
     Include(String),
+
+    #[error("Binding YAML error: {0}")]
+    Binding(#[from] serde_yaml::Error),
 }
 
 #[derive(Debug)]
