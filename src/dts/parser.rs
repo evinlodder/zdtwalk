@@ -8,8 +8,8 @@ use nom::{
     IResult,
 };
 
-use crate::error::{ParseError, ParseErrorKind};
-use crate::model::*;
+use super::error::{ParseError, ParseErrorKind};
+use super::model::*;
 
 type PResult<'a, T> = IResult<&'a str, T>;
 
@@ -27,7 +27,7 @@ pub fn parse_dts(input: &str) -> Result<DeviceTree, ParseError> {
             } else {
                 // Find where the leftover starts in the original source.
                 let (line, column, context_line) =
-                    crate::error::location_in(input, trimmed);
+                    super::error::location_in(input, trimmed);
                 Err(ParseError {
                     line,
                     column,
@@ -43,7 +43,7 @@ pub fn parse_dts(input: &str) -> Result<DeviceTree, ParseError> {
                 nom::Err::Incomplete(_) => input,
             };
             let (line, column, context_line) =
-                crate::error::location_in(input, remaining);
+                super::error::location_in(input, remaining);
             let msg = match &e {
                 nom::Err::Error(inner) | nom::Err::Failure(inner) => {
                     friendly_error_message(inner.code, remaining)

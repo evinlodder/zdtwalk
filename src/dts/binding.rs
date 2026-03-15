@@ -320,14 +320,14 @@ impl fmt::Display for Value {
 // ---------------------------------------------------------------------------
 
 /// Deserialize a Zephyr devicetree binding from a YAML string.
-pub fn deserialize_binding(yaml: &str) -> Result<Binding, crate::Error> {
+pub fn deserialize_binding(yaml: &str) -> Result<Binding, super::Error> {
     Ok(serde_yaml::from_str(yaml)?)
 }
 
 /// Deserialize a Zephyr devicetree binding from a byte reader.
 pub fn deserialize_binding_from_reader<R: std::io::Read>(
     reader: R,
-) -> Result<Binding, crate::Error> {
+) -> Result<Binding, super::Error> {
     Ok(serde_yaml::from_reader(reader)?)
 }
 

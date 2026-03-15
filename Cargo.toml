@@ -1,6 +1,12 @@
-[workspace]
-members = [
-    "zdtwalk",
-    "zdtwalk-dts",
-]
-resolver = "2"
+[package]
+name = "zdtwalk"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+nom = "7"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+thiserror = "2"

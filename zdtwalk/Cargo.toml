@@ -1,8 +1,0 @@
-[package]
-name = "zdtwalk"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-zdtwalk-dts = { path = "../zdtwalk-dts" }
-clap = { version = "4", features = ["derive"] }

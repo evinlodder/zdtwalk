@@ -4,6 +4,7 @@
         "cargo test": true,
         "target/debug/zdtwalk": true,
         "cargo run": true,
-        "printf": true
+        "printf": true,
+        "cp": true
     }
 }

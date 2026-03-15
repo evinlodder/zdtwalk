@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::error::Error;
-use crate::model::*;
-use crate::parser::{self, merge_nodes};
+use super::error::Error;
+use super::model::*;
+use super::parser::{self, merge_nodes};
 
 /// Recursively resolves `#include` / `/include/` directives by reading the
 /// referenced files from disk and merging their contents into a single

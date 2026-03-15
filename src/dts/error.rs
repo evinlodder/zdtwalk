@@ -14,6 +14,9 @@ pub enum Error {
 
     #[error("Binding YAML error: {0}")]
     Binding(#[from] serde_yaml::Error),
+
+    #[error("West error: {0}")]
+    West(#[from] crate::west::WestError),
 }
 
 #[derive(Debug)]

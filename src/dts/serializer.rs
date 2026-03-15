@@ -1,4 +1,4 @@
-use crate::model::*;
+use super::model::*;
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -285,7 +285,7 @@ fn escape_string(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::parse_dts;
+    use crate::dts::parser::parse_dts;
 
     #[test]
     fn round_trip_minimal() {

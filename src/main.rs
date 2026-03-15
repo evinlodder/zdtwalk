@@ -1,10 +1,15 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use zdtwalk_dts::{
+
+mod dts;
+mod west;
+
+use dts::{
     format_property_value, serialize, DeviceTree, IncludeKind, OutputFormat, Resolver,
     SerializerConfig,
 };
+use west::DtsSource;
 
 // ---------------------------------------------------------------------------
 // CLI definition
@@ -33,6 +38,17 @@ enum Commands {
         /// Resolve includes recursively before analysing.
         #[arg(long)]
         resolve: bool,
+    },
+
+    /// Fetch DTS files from remote HAL repositories defined in west.yml.
+    FetchHals {
+        /// Re-fetch even if already cached.
+        #[arg(long)]
+        force: bool,
+
+        /// Only use local and cached sources; do not fetch from remote.
+        #[arg(long)]
+        offline: bool,
     },
 
     /// Convert a DTS/DTSI file to another format.
@@ -90,8 +106,12 @@ fn main() {
     }
 }
 
-fn run(cli: Cli) -> Result<(), zdtwalk_dts::Error> {
+fn run(cli: Cli) -> Result<(), dts::Error> {
     match cli.command {
+        Commands::FetchHals { force, offline } => {
+            run_fetch_hals(force, offline)?;
+        }
+
         Commands::Analyze {
             input,
             include_paths,
@@ -151,7 +171,7 @@ fn load_tree(
     input: &PathBuf,
     include_paths: &[PathBuf],
     resolve: bool,
-) -> Result<DeviceTree, zdtwalk_dts::Error> {
+) -> Result<DeviceTree, dts::Error> {
     if resolve {
         let mut resolver = Resolver::new();
         for p in include_paths {
@@ -160,8 +180,110 @@ fn load_tree(
         resolver.resolve_file(input)
     } else {
         let content = std::fs::read_to_string(input)?;
-        Ok(zdtwalk_dts::parse_dts(&content)?)
+        Ok(dts::parse_dts(&content)?)
     }
+}
+
+fn run_fetch_hals(force: bool, offline: bool) -> Result<(), dts::Error> {
+    let cwd = std::env::current_dir()?;
+    eprintln!("Searching for Zephyr workspace from {}", cwd.display());
+
+    let workspace = west::find_workspace(&cwd)?;
+    eprintln!(
+        "Found workspace at {}",
+        workspace.workspace_root.display()
+    );
+
+    let sdk_version = west::get_sdk_version(&workspace.zephyr_dir)?;
+    eprintln!("SDK version: {sdk_version}");
+
+    if offline {
+        eprintln!("Offline mode: only using local and cached sources.");
+    }
+
+    let manifest = west::parse_west_manifest(&workspace.west_yml_path)?;
+    let hal_projects = manifest.manifest.hal_projects();
+    eprintln!("Found {} HAL projects in manifest.\n", hal_projects.len());
+
+    let results = if offline {
+        let mut results = Vec::new();
+        for project in &hal_projects {
+            eprint!("  {:<30} ", project.name);
+
+            let local_dts = workspace
+                .workspace_root
+                .join(project.local_path())
+                .join("dts");
+            if local_dts.is_dir() {
+                eprintln!("local  {}", local_dts.display());
+                results.push(west::HalDtsEntry {
+                    project_name: project.name.clone(),
+                    path: Some(local_dts),
+                    source: DtsSource::Local,
+                });
+                continue;
+            }
+
+            if !force {
+                if west::cache::is_marked_no_dts(&sdk_version, &project.name)? {
+                    eprintln!("no-dts (cached)");
+                    results.push(west::HalDtsEntry {
+                        project_name: project.name.clone(),
+                        path: None,
+                        source: DtsSource::NoDts,
+                    });
+                    continue;
+                }
+                if west::cache::is_cached(&sdk_version, &project.name)? {
+                    let p = west::cache::dts_cache_path(&sdk_version, &project.name)?;
+                    eprintln!("cached {}", p.display());
+                    results.push(west::HalDtsEntry {
+                        project_name: project.name.clone(),
+                        path: Some(p),
+                        source: DtsSource::Cached,
+                    });
+                    continue;
+                }
+            }
+
+            eprintln!("skipped (offline)");
+        }
+        results
+    } else {
+        let results = west::fetch::fetch_all_hal_dts(&workspace, force)?;
+        for entry in &results {
+            eprint!("  {:<30} ", entry.project_name);
+            match &entry.source {
+                DtsSource::Local => {
+                    eprintln!("local  {}", entry.path.as_ref().unwrap().display());
+                }
+                DtsSource::Cached => {
+                    eprintln!("cached {}", entry.path.as_ref().unwrap().display());
+                }
+                DtsSource::Fetched => {
+                    eprintln!("fetched {}", entry.path.as_ref().unwrap().display());
+                }
+                DtsSource::NoDts => {
+                    eprintln!("no dts/ directory");
+                }
+            }
+        }
+        results
+    };
+
+    // Summary.
+    let local_count = results.iter().filter(|e| e.source == DtsSource::Local).count();
+    let cached_count = results.iter().filter(|e| e.source == DtsSource::Cached).count();
+    let fetched_count = results.iter().filter(|e| e.source == DtsSource::Fetched).count();
+    let no_dts_count = results.iter().filter(|e| e.source == DtsSource::NoDts).count();
+
+    eprintln!("\nSummary:");
+    eprintln!("  Local:   {local_count}");
+    eprintln!("  Cached:  {cached_count}");
+    eprintln!("  Fetched: {fetched_count}");
+    eprintln!("  No DTS:  {no_dts_count}");
+
+    Ok(())
 }
 
 fn print_analysis(tree: &DeviceTree) {
@@ -242,7 +364,7 @@ fn print_analysis(tree: &DeviceTree) {
     }
 }
 
-fn print_node(node: &zdtwalk_dts::Node, display_name: &str, depth: usize) {
+fn print_node(node: &dts::Node, display_name: &str, depth: usize) {
     let indent = "  ".repeat(depth);
     let label_str = if node.labels.is_empty() {
         String::new()
