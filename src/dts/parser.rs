@@ -241,13 +241,15 @@ fn parse_root_node(input: &str) -> PResult<'_, Node> {
 }
 
 fn parse_reference_node(input: &str) -> PResult<'_, ReferenceNode> {
+    let (input, labels) = many0(terminated(parse_label_def, ws))(input)?;
     let (input, reference) = parse_reference(input)?;
     let (input, _) = ws(input)?;
     let (input, _) = char('{')(input)?;
     // Committed: we know this is a reference node.
-    let (input, node) = cut(parse_node_body)(input)?;
+    let (input, mut node) = cut(parse_node_body)(input)?;
     let (input, _) = cut(ws_before(char('}')))(input)?;
     let (input, _) = cut(ws_before(char(';')))(input)?;
+    node.labels = labels;
     Ok((input, ReferenceNode { reference, node }))
 }
 
@@ -294,6 +296,7 @@ fn parse_node_item(input: &str) -> PResult<'_, NodeItem> {
     alt((
         map(parse_delete_property, NodeItem::DeleteProperty),
         map(parse_delete_node_inner, NodeItem::DeleteNode),
+        map(parse_child_ref_node, NodeItem::ChildNode),
         map(parse_child_node, NodeItem::ChildNode),
         map(parse_property, NodeItem::Property),
     ))(input)
@@ -331,6 +334,22 @@ fn parse_child_node(input: &str) -> PResult<'_, Node> {
 
     node.name = name.to_string();
     node.unit_address = unit_addr.map(|s| s.to_string());
+    node.labels = labels;
+    Ok((input, node))
+}
+
+/// Parse a child reference node: `label: &ref { ... };`
+/// This is a node definition that targets a phandle reference.
+fn parse_child_ref_node(input: &str) -> PResult<'_, Node> {
+    let (input, labels) = many0(terminated(parse_label_def, ws))(input)?;
+    let (input, reference) = parse_reference(input)?;
+    let (input, _) = ws(input)?;
+    let (input, _) = char('{')(input)?;
+    let (input, mut node) = cut(parse_node_body)(input)?;
+    let (input, _) = cut(ws_before(char('}')))(input)?;
+    let (input, _) = cut(ws_before(char(';')))(input)?;
+
+    node.name = reference.to_string();
     node.labels = labels;
     Ok((input, node))
 }
@@ -490,7 +509,22 @@ fn parse_cell(input: &str) -> PResult<'_, Cell> {
         parse_macro_call,
         map(parse_char_literal, Cell::Literal),
         map(parse_integer, Cell::Literal),
+        parse_bare_identifier,
     ))(input)
+}
+
+/// Parse a bare C identifier like `GPIO_ACTIVE_HIGH` or `INPUT_KEY_0`.
+/// Must NOT be followed by '(' (that would be a macro call, handled above).
+fn parse_bare_identifier(input: &str) -> PResult<'_, Cell> {
+    let (rest, name) = parse_identifier(input)?;
+    // Make sure it's not a macro call (followed by '(').
+    if rest.starts_with('(') {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Not,
+        )));
+    }
+    Ok((rest, Cell::Identifier(name.to_string())))
 }
 
 /// Parse a C macro invocation like `STM32_PINMUX('A', 0, ANALOG)` inside a
@@ -906,5 +940,43 @@ mod tests {
         // Should not fail – unknown preprocessor lines are silently skipped.
         let tree = parse_dts(src).unwrap();
         assert!(tree.root.is_some());
+    }
+
+    #[test]
+    fn parse_labeled_reference_node() {
+        let src = r#"/dts-v1/;
+/ {
+    node1 {
+        compatible = "test";
+    };
+};
+
+my_label: &uart0 {};
+"#;
+        let tree = parse_dts(src).unwrap();
+        assert_eq!(tree.reference_nodes.len(), 1);
+        assert_eq!(
+            tree.reference_nodes[0].reference,
+            Reference::Label("uart0".to_string())
+        );
+        assert_eq!(tree.reference_nodes[0].node.labels, vec!["my_label"]);
+    }
+
+    #[test]
+    fn parse_bare_identifier_in_cell() {
+        let src = r#"/dts-v1/;
+/ {
+    gpios = <&gpiob 0 GPIO_ACTIVE_HIGH>;
+};
+"#;
+        let tree = parse_dts(src).unwrap();
+        let root = tree.root.unwrap();
+        let val = root.property("gpios").unwrap().value.as_ref().unwrap();
+        if let ValuePart::CellArray(cells) = &val.0[0] {
+            assert_eq!(cells.len(), 3);
+            assert_eq!(cells[2], Cell::Identifier("GPIO_ACTIVE_HIGH".to_string()));
+        } else {
+            panic!("expected CellArray");
+        }
     }
 }

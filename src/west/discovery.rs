@@ -62,9 +62,32 @@ pub fn find_workspace(start: &Path) -> Result<WorkspaceInfo, WestError> {
 
 /// Build [`WorkspaceInfo`] from the workspace root by reading `.west/config`.
 fn workspace_from_root(root: &Path) -> Result<WorkspaceInfo, WestError> {
-    let manifest_path = read_manifest_path(root)?;
-    let zephyr_dir = root.join(&manifest_path);
-    let west_yml = zephyr_dir.join("west.yml");
+    let config = parse_west_config(root)?;
+
+    // The manifest path is where west.yml lives.
+    let manifest_dir = root.join(&config.manifest_path);
+    let west_yml = manifest_dir.join(config.manifest_file.as_deref().unwrap_or("west.yml"));
+
+    // Resolve the actual Zephyr directory:
+    // 1. Use [zephyr] base if present and valid
+    // 2. Fall back to root/zephyr/ if it contains VERSION
+    // 3. Fall back to the manifest path
+    let zephyr_dir = if let Some(base) = &config.zephyr_base {
+        let candidate = root.join(base);
+        if candidate.join("VERSION").exists() {
+            candidate
+        } else {
+            manifest_dir.clone()
+        }
+    } else {
+        // No [zephyr] base — try root/zephyr/ first.
+        let candidate = root.join("zephyr");
+        if candidate.join("VERSION").exists() {
+            candidate
+        } else {
+            manifest_dir.clone()
+        }
+    };
 
     Ok(WorkspaceInfo {
         workspace_root: root.to_path_buf(),
@@ -73,36 +96,56 @@ fn workspace_from_root(root: &Path) -> Result<WorkspaceInfo, WestError> {
     })
 }
 
-/// Parse `.west/config` to extract the manifest path.
+/// Parsed values from `.west/config`.
+struct WestConfig {
+    manifest_path: String,
+    manifest_file: Option<String>,
+    zephyr_base: Option<String>,
+}
+
+/// Parse `.west/config` to extract relevant paths.
 ///
 /// The file is a simple INI-like format:
 /// ```ini
 /// [manifest]
 /// path = zephyr
+/// file = west.yml
+///
+/// [zephyr]
+/// base = zephyr
 /// ```
-fn read_manifest_path(root: &Path) -> Result<String, WestError> {
+fn parse_west_config(root: &Path) -> Result<WestConfig, WestError> {
     let config_path = root.join(".west").join("config");
     let content = std::fs::read_to_string(&config_path)?;
 
-    let mut in_manifest_section = false;
+    let mut manifest_path = None;
+    let mut manifest_file = None;
+    let mut zephyr_base = None;
+    let mut current_section = String::new();
+
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            in_manifest_section = trimmed == "[manifest]";
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            current_section = trimmed[1..trimmed.len() - 1].trim().to_string();
             continue;
         }
-        if in_manifest_section {
-            if let Some(rest) = trimmed.strip_prefix("path") {
-                let rest = rest.trim_start();
-                if let Some(value) = rest.strip_prefix('=') {
-                    return Ok(value.trim().to_string());
-                }
+        if let Some((key, val)) = trimmed.split_once('=') {
+            let key = key.trim();
+            let val = val.trim();
+            match (current_section.as_str(), key) {
+                ("manifest", "path") => manifest_path = Some(val.to_string()),
+                ("manifest", "file") => manifest_file = Some(val.to_string()),
+                ("zephyr", "base") => zephyr_base = Some(val.to_string()),
+                _ => {}
             }
         }
     }
 
-    // Fallback: assume "zephyr" if no explicit path found.
-    Ok("zephyr".to_string())
+    Ok(WestConfig {
+        manifest_path: manifest_path.unwrap_or_else(|| "zephyr".to_string()),
+        manifest_file,
+        zephyr_base,
+    })
 }
 
 fn is_hidden(path: &Path) -> bool {
@@ -132,8 +175,9 @@ mod tests {
             "[manifest]\npath = zephyr\n",
         )
         .unwrap();
-        // Create a west.yml so the path exists.
+        // Create a west.yml and VERSION so the path resolves correctly.
         fs::write(zephyr_dir.join("west.yml"), "").unwrap();
+        fs::write(zephyr_dir.join("VERSION"), "VERSION_MAJOR = 3\nVERSION_MINOR = 0\nPATCHLEVEL = 0\n").unwrap();
 
         let info = find_workspace(&nested).unwrap();
         assert_eq!(info.workspace_root, tmp);
@@ -159,9 +203,38 @@ mod tests {
         )
         .unwrap();
         fs::write(zephyr_dir.join("west.yml"), "").unwrap();
+        fs::write(zephyr_dir.join("VERSION"), "VERSION_MAJOR = 3\nVERSION_MINOR = 0\nPATCHLEVEL = 0\n").unwrap();
 
         let info = find_workspace(&tmp).unwrap();
         assert_eq!(info.workspace_root, ws);
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_find_workspace_zephyr_base() {
+        let tmp = std::env::temp_dir().join("zdtwalk_test_discovery_base");
+        let _ = fs::remove_dir_all(&tmp);
+
+        // Simulate a workspace where manifest path != zephyr base.
+        let west_dir = tmp.join(".west");
+        let zephyr_dir = tmp.join("zephyr");
+        fs::create_dir_all(&west_dir).unwrap();
+        fs::create_dir_all(&zephyr_dir).unwrap();
+        fs::write(
+            west_dir.join("config"),
+            "[manifest]\npath = .west\nfile = west.yml\n\n[zephyr]\nbase = zephyr\n",
+        )
+        .unwrap();
+        fs::write(west_dir.join("west.yml"), "").unwrap();
+        fs::write(zephyr_dir.join("VERSION"), "VERSION_MAJOR = 4\nVERSION_MINOR = 3\nPATCHLEVEL = 0\n").unwrap();
+
+        let info = find_workspace(&tmp).unwrap();
+        assert_eq!(info.workspace_root, tmp);
+        // zephyr_dir should resolve to zephyr/ via [zephyr] base, NOT .west/.
+        assert_eq!(info.zephyr_dir, zephyr_dir);
+        // west.yml should be in .west/.
+        assert_eq!(info.west_yml_path, west_dir.join("west.yml"));
 
         let _ = fs::remove_dir_all(&tmp);
     }

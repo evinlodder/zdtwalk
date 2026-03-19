@@ -241,6 +241,9 @@ fn write_property_value(out: &mut String, value: &PropertyValue) {
                             out.push_str(args);
                             out.push(')');
                         }
+                        Cell::Identifier(name) => {
+                            out.push_str(name);
+                        }
                     }
                 }
                 out.push('>');

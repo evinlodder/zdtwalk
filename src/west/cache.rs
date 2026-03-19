@@ -22,6 +22,11 @@ pub fn dts_cache_path(sdk_version: &str, project_name: &str) -> Result<PathBuf, 
     Ok(cache_path_for(sdk_version, project_name)?.join("dts"))
 }
 
+/// Return the cache path specifically for the bindings/ sub-directory of a HAL project.
+pub fn bindings_cache_path(sdk_version: &str, project_name: &str) -> Result<PathBuf, WestError> {
+    Ok(cache_path_for(sdk_version, project_name)?.join("bindings"))
+}
+
 /// Check whether DTS files are already cached for this project+version.
 pub fn is_cached(sdk_version: &str, project_name: &str) -> Result<bool, WestError> {
     let dts_dir = dts_cache_path(sdk_version, project_name)?;
