@@ -13,7 +13,7 @@ pub struct WestManifest {
     pub manifest: ManifestContent,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct ManifestContent {
     #[serde(default)]
@@ -27,19 +27,19 @@ pub struct ManifestContent {
     pub group_filter: Vec<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize)]
 pub struct ManifestDefaults {
     pub remote: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Remote {
     pub name: String,
     pub url_base: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Project {
     pub name: String,
@@ -53,6 +53,10 @@ pub struct Project {
     pub repo_path: Option<String>,
     #[serde(default)]
     pub groups: Vec<String>,
+    /// West manifest import directive.  Can be `true`, a string path, or a map.
+    /// We only need to detect its presence to follow imports.
+    #[serde(default)]
+    pub import: Option<serde_yaml::Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +91,12 @@ impl Project {
     /// Falls back to the project name if `path` is not set.
     pub fn local_path(&self) -> &str {
         self.path.as_deref().unwrap_or(&self.name)
+    }
+
+    /// Whether this project has an `import` directive (i.e. its manifest
+    /// should be recursively merged).
+    pub fn has_import(&self) -> bool {
+        self.import.is_some()
     }
 }
 

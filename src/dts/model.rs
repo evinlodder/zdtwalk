@@ -309,4 +309,6 @@ pub enum Cell {
     /// A C macro invocation, e.g. `STM32_PINMUX('A', 0, ANALOG)`.
     /// Stored as `(name, args_verbatim)`.
     Macro(String, String),
+    /// A bare C identifier (e.g. `GPIO_ACTIVE_HIGH`), typically a #define.
+    Identifier(String),
 }
