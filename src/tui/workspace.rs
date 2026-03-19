@@ -576,3 +576,17 @@ pub fn resolve_include(
     }
     result
 }
+
+// ---------------------------------------------------------------------------
+// Public re-exports for generator integration
+// ---------------------------------------------------------------------------
+
+/// Public wrapper around `find_board_dir` for the overlay generator.
+pub fn find_board_dir_pub(boards_dir: &Path, board: &str) -> Option<PathBuf> {
+    find_board_dir(boards_dir, board)
+}
+
+/// Public wrapper around `build_dts_search_paths` for the overlay generator.
+pub fn build_dts_search_paths_pub(ws: &WorkspaceState, board_dir: &Path) -> Vec<PathBuf> {
+    build_dts_search_paths(ws, board_dir)
+}
