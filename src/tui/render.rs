@@ -139,6 +139,18 @@ fn render_help(frame: &mut Frame, size: Rect) {
             ("G", "Jump to bottom (follow)"),
             ("g", "Jump to top"),
         ]),
+        ("Generator Panel", vec![
+            ("→ / Enter", "Next step / expand node"),
+            ("← / Esc", "Previous step / back"),
+            ("j / k", "Navigate nodes / file browser"),
+            ("a", "Add node from viewer (center panel)"),
+            ("n", "New reference node / new file (save)"),
+            ("c", "Add child node"),
+            ("p", "Add property"),
+            ("e", "Edit property"),
+            ("d", "Delete selected node"),
+            ("s", "Save overlay"),
+        ]),
     ];
 
     // Calculate dimensions.

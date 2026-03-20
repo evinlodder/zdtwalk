@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::dts::{self, Binding, DeviceTree};
+use crate::dts::{self, Binding, DeviceTree, Reference};
 
 use super::super::widgets::status_dot::StatusColor;
 
@@ -91,7 +91,7 @@ struct Tab {
 impl Tab {
     fn new(path: PathBuf) -> Self {
         Self {
-            mode: ViewerMode::Raw,
+            mode: ViewerMode::Simplified,
             file: path,
             raw_content: None,
             content: ViewContent::None,
@@ -370,7 +370,75 @@ impl ViewerState {
         None
     }
 
-    /// Toggle visual line selection mode.
+    /// Return the DTS reference and labels for the node under the cursor.
+    ///
+    /// Works only in Simplified mode when the cursor is on a NodeHeader line.
+    /// Returns `(Reference, Vec<String>)` where the Reference is a path and
+    /// labels come from the underlying tree node.
+    pub fn node_at_cursor(&self) -> Option<(Reference, Vec<String>)> {
+        let tab = self.active_tab()?;
+        if tab.mode != ViewerMode::Simplified {
+            return None;
+        }
+        let sline = tab.simplified_lines.get(tab.selected_line)?;
+
+        // Only NodeHeader lines map to actual nodes.
+        let path_key = match &sline.kind {
+            LineKind::NodeHeader { .. } => &sline.path_key,
+            LineKind::Property { .. } => {
+                // Walk up to the parent node header.
+                // The path_key for a property is `<node_path>/<prop_name>`.
+                let parent_key = sline.path_key.rsplit_once('/')?.0;
+                // Find the node header with this path key.
+                return self.find_node_in_tree(tab, parent_key);
+            }
+            _ => return None,
+        };
+
+        self.find_node_in_tree(tab, path_key)
+    }
+
+    fn find_node_in_tree(&self, tab: &Tab, path_key: &str) -> Option<(Reference, Vec<String>)> {
+        let tree = match &tab.content {
+            ViewContent::Dts { tree } => tree,
+            _ => return None,
+        };
+
+        // The path_key is either "/" for root, "/soc/i2c@..." for nested nodes,
+        // or "&label" for reference node overrides.
+        if path_key.starts_with('&') {
+            // It's a reference node override.
+            let label = path_key.strip_prefix('&')?;
+            return Some((Reference::Label(label.to_string()), vec![label.to_string()]));
+        }
+
+        // Walk the tree to find the node at this path.
+        if let Some(root) = &tree.root {
+            if path_key == "/" {
+                let labels = root.labels.clone();
+                return Some((Reference::Path("/".to_string()), labels));
+            }
+
+            if let Some(node) = find_node_by_path(root, path_key, "/") {
+                let labels = node.labels.clone();
+                if !labels.is_empty() {
+                    return Some((Reference::Label(labels[0].clone()), labels));
+                }
+                return Some((Reference::Path(path_key.to_string()), labels));
+            }
+        }
+
+        // Check reference nodes.
+        for rn in &tree.reference_nodes {
+            let ref_str = format!("{}", rn.reference);
+            if ref_str == path_key {
+                let labels = rn.node.labels.clone();
+                return Some((rn.reference.clone(), labels));
+            }
+        }
+
+        None
+    }
     pub fn toggle_visual(&mut self) {
         if let Some(tab) = self.active_tab_mut() {
             if tab.selection_anchor.is_some() {
@@ -1065,4 +1133,20 @@ fn simplified_line_text(sl: &SimplifiedLine) -> String {
             }
         }
     }
+}
+
+/// Walk a node tree to find the node at a given path key.
+///
+/// Path keys look like `/soc/i2c@40003000` (matching the simplified line keys).
+fn find_node_by_path<'a>(node: &'a dts::Node, target: &str, current: &str) -> Option<&'a dts::Node> {
+    if current == target {
+        return Some(node);
+    }
+    for child in &node.children {
+        let child_path = format!("{}/{}", current, child.full_name());
+        if let Some(found) = find_node_by_path(child, target, &child_path) {
+            return Some(found);
+        }
+    }
+    None
 }

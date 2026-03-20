@@ -17,6 +17,16 @@ type PResult<'a, T> = IResult<&'a str, T>;
 // Public entry point
 // ===================================================================
 
+/// Try to parse a raw property value string (e.g. `<&gpio0 13 0>`,
+/// `"hello"`, `[DE AD]`). Returns `None` if the input doesn't match
+/// any DTS value syntax.
+pub fn parse_property_value_str(input: &str) -> Option<PropertyValue> {
+    match parse_property_value(input.trim()) {
+        Ok((remaining, val)) if remaining.trim().is_empty() => Some(val),
+        _ => None,
+    }
+}
+
 /// Parse a complete DTS / DTSI source string into a [`DeviceTree`].
 pub fn parse_dts(input: &str) -> Result<DeviceTree, ParseError> {
     match parse_file(input) {

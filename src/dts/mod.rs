@@ -11,6 +11,6 @@ pub use binding::{
 };
 pub use error::{Error, ParseError, ParseErrorKind};
 pub use model::*;
-pub use parser::parse_dts;
+pub use parser::{parse_dts, parse_property_value_str};
 pub use resolver::Resolver;
 pub use serializer::{format_property_value, serialize, OutputFormat, SerializerConfig};
