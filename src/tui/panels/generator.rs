@@ -823,8 +823,8 @@ impl GeneratorState {
             let label = match mode {
                 InputMode::NodeReference => "Ref (e.g. &i2c1): ",
                 InputMode::ChildName => "Child name: ",
-                InputMode::PropertyName => "Prop name: ",
-                InputMode::PropertyValue => "Prop value: ",
+                InputMode::PropertyName => "Property name: ",
+                InputMode::PropertyValue => "Property value: ",
                 InputMode::FileName => "Filename: ",
             };
             lines.push(Line::from(vec![
@@ -1000,7 +1000,7 @@ impl GeneratorState {
         )));
         let hints = [
             ("Enter", "select file / enter dir"),
-            ("Bksp", "go up one directory"),
+            ("Back", "go up one directory"),
             ("n", "create new file"),
             ("←", "back to edit nodes"),
         ];

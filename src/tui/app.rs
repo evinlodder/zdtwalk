@@ -340,7 +340,7 @@ impl App {
             KeyCode::Char('m') => {
                 if board_locked {
                     self.status_message = Some(
-                        "Left panel locked to board context (close generator to change)".to_string(),
+                        "Left panel locked while generator is open".to_string(),
                     );
                     return;
                 }
@@ -358,7 +358,7 @@ impl App {
             KeyCode::Char('1') => {
                 if board_locked {
                     self.status_message = Some(
-                        "Left panel locked to board context (close generator to change)".to_string(),
+                        "Left panel locked while generator is open".to_string(),
                     );
                     return;
                 }
@@ -376,7 +376,7 @@ impl App {
             KeyCode::Char('2') => {
                 if board_locked {
                     self.status_message = Some(
-                        "Left panel locked to board context (close generator to change)".to_string(),
+                        "Left panel locked while generator is open".to_string(),
                     );
                     return;
                 }
@@ -388,7 +388,7 @@ impl App {
             KeyCode::Char('3') => {
                 if board_locked {
                     self.status_message = Some(
-                        "Left panel locked to board context (close generator to change)".to_string(),
+                        "Left panel locked while generator is open".to_string(),
                     );
                     return;
                 }
