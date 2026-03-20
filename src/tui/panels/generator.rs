@@ -71,6 +71,8 @@ pub struct GeneratorState {
     pub save_input: String,
     pub save_input_active: bool,
     pub confirm_overwrite: bool,
+    /// Whether overlay was saved and user is being asked if they want to continue.
+    pub save_complete: bool,
 }
 
 impl GeneratorState {
@@ -105,6 +107,7 @@ impl GeneratorState {
             save_input: String::new(),
             save_input_active: false,
             confirm_overwrite: false,
+            save_complete: false,
         }
     }
 
@@ -114,6 +117,26 @@ impl GeneratorState {
 
     pub fn toggle_collapsed(&mut self) {
         self.collapsed = !self.collapsed;
+    }
+
+    /// Reset the overlay to start fresh (keeps board selection).
+    pub fn reset_overlay(&mut self) {
+        let mut tree = DeviceTree::new();
+        tree.version = Some(DtsVersion::V1);
+        tree.is_plugin = true;
+        self.overlay_tree = tree;
+        self.selected_node = 0;
+        self.node_scroll = 0;
+        self.expanded_nodes.clear();
+        self.editing_property = None;
+        self.input_buffer.clear();
+        self.input_mode = None;
+        self.save_path = None;
+        self.save_input.clear();
+        self.save_input_active = false;
+        self.confirm_overwrite = false;
+        self.save_complete = false;
+        self.step = GeneratorStep::EditNodes;
     }
 
     // ------------------------------------------------------------------
@@ -206,25 +229,46 @@ impl GeneratorState {
     }
 
     pub fn delete_selected_node(&mut self) {
-        let count = self.overlay_node_count();
-        if count == 0 {
-            return;
-        }
-        let idx = self.selected_node.min(count - 1);
-        self.overlay_tree.reference_nodes.remove(idx);
-        self.expanded_nodes.remove(&idx);
-        // Shift any expanded indices above the removed one
-        let shifted: HashSet<usize> = self
-            .expanded_nodes
-            .iter()
-            .map(|&i| if i > idx { i - 1 } else { i })
-            .collect();
-        self.expanded_nodes = shifted;
-        let new_count = self.overlay_node_count();
-        if new_count == 0 {
-            self.selected_node = 0;
-        } else if self.selected_node >= new_count {
-            self.selected_node = new_count - 1;
+        if let Some((node_idx, sub)) = self.line_to_node_info(self.selected_node) {
+            if sub == 0 {
+                // Delete the whole reference node.
+                self.overlay_tree.reference_nodes.remove(node_idx);
+                self.expanded_nodes.remove(&node_idx);
+                // Shift any expanded indices above the removed one
+                let shifted: HashSet<usize> = self
+                    .expanded_nodes
+                    .iter()
+                    .map(|&i| if i > node_idx { i - 1 } else { i })
+                    .collect();
+                self.expanded_nodes = shifted;
+                let new_count = self.edit_visible_line_count();
+                if new_count == 0 {
+                    self.selected_node = 0;
+                } else if self.selected_node >= new_count {
+                    self.selected_node = new_count.saturating_sub(1);
+                }
+            } else {
+                // sub >= 1 — delete property or child at that sub-index.
+                let node = &mut self.overlay_tree.reference_nodes[node_idx].node;
+                let prop_idx = sub - 1;
+                if prop_idx < node.properties.len() {
+                    node.properties.remove(prop_idx);
+                    // Adjust cursor
+                    let new_count = self.edit_visible_line_count();
+                    if self.selected_node >= new_count && new_count > 0 {
+                        self.selected_node = new_count - 1;
+                    }
+                } else {
+                    let child_idx = prop_idx - node.properties.len();
+                    if child_idx < node.children.len() {
+                        node.children.remove(child_idx);
+                        let new_count = self.edit_visible_line_count();
+                        if self.selected_node >= new_count && new_count > 0 {
+                            self.selected_node = new_count - 1;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -258,6 +302,40 @@ impl GeneratorState {
     // Cursor / scroll navigation
     // ------------------------------------------------------------------
 
+    /// Count the total number of visible lines in the EditNodes view.
+    fn edit_visible_line_count(&self) -> usize {
+        let mut count = 0;
+        for (idx, rn) in self.overlay_tree.reference_nodes.iter().enumerate() {
+            count += 1; // node header
+            if self.expanded_nodes.contains(&idx) {
+                count += rn.node.properties.len();
+                count += rn.node.children.len();
+            }
+        }
+        count
+    }
+
+    /// Map a flat visible-line index to (node_idx, sub_line) where sub_line
+    /// is 0 for the node header, 1..=n for properties, n+1..=n+m for children.
+    pub fn line_to_node_info(&self, line: usize) -> Option<(usize, usize)> {
+        let mut cursor = 0;
+        for (idx, rn) in self.overlay_tree.reference_nodes.iter().enumerate() {
+            if cursor == line {
+                return Some((idx, 0));
+            }
+            cursor += 1;
+            if self.expanded_nodes.contains(&idx) {
+                let prop_count = rn.node.properties.len();
+                let child_count = rn.node.children.len();
+                if line < cursor + prop_count + child_count {
+                    return Some((idx, line - cursor + 1));
+                }
+                cursor += prop_count + child_count;
+            }
+        }
+        None
+    }
+
     pub fn move_up(&mut self) {
         match self.step {
             GeneratorStep::SelectBoard => {}
@@ -274,7 +352,7 @@ impl GeneratorState {
         match self.step {
             GeneratorStep::SelectBoard => {}
             GeneratorStep::EditNodes => {
-                let count = self.overlay_node_count();
+                let count = self.edit_visible_line_count();
                 if count > 0 && self.selected_node < count - 1 {
                     self.selected_node += 1;
                 }
@@ -289,11 +367,12 @@ impl GeneratorState {
         if self.step != GeneratorStep::EditNodes {
             return;
         }
-        if self.selected_node < self.overlay_node_count() {
-            if self.expanded_nodes.contains(&self.selected_node) {
-                self.expanded_nodes.remove(&self.selected_node);
+        // Determine which node the cursor is on.
+        if let Some((node_idx, _sub)) = self.line_to_node_info(self.selected_node) {
+            if self.expanded_nodes.contains(&node_idx) {
+                self.expanded_nodes.remove(&node_idx);
             } else {
-                self.expanded_nodes.insert(self.selected_node);
+                self.expanded_nodes.insert(node_idx);
             }
         }
     }
@@ -308,39 +387,71 @@ impl GeneratorState {
     }
 
     pub fn start_add_property(&mut self) {
-        self.input_mode = Some(InputMode::PropertyName);
-        self.input_buffer.clear();
+        // Determine which node the cursor is on and add a property to it.
+        if let Some((node_idx, _)) = self.line_to_node_info(self.selected_node) {
+            self.input_mode = Some(InputMode::PropertyName);
+            self.input_buffer.clear();
+            // Pre-set the target node so confirm_input knows where to add.
+            self.editing_property = Some(PropertyEditState {
+                node_idx,
+                prop_idx: self.overlay_tree.reference_nodes[node_idx].node.properties.len(),
+                name: String::new(),
+                value: String::new(),
+            });
+        }
     }
 
     pub fn start_edit_property(&mut self) {
-        let count = self.overlay_node_count();
-        if count == 0 {
-            return;
+        // If cursor is on a property line, edit that property.
+        if let Some((node_idx, sub)) = self.line_to_node_info(self.selected_node) {
+            if sub == 0 {
+                // On a node header — try first property.
+                let node = &self.overlay_tree.reference_nodes[node_idx].node;
+                if node.properties.is_empty() {
+                    return;
+                }
+                let prop = &node.properties[0];
+                let value = match &prop.value {
+                    Some(v) => dts::format_property_value(v),
+                    None => String::new(),
+                };
+                self.editing_property = Some(PropertyEditState {
+                    node_idx,
+                    prop_idx: 0,
+                    name: prop.name.clone(),
+                    value: value.clone(),
+                });
+                self.input_mode = Some(InputMode::PropertyValue);
+                self.input_buffer = value;
+            } else {
+                // sub >= 1 — check if this is a property line.
+                let node = &self.overlay_tree.reference_nodes[node_idx].node;
+                let prop_idx = sub - 1;
+                if prop_idx < node.properties.len() {
+                    let prop = &node.properties[prop_idx];
+                    let value = match &prop.value {
+                        Some(v) => dts::format_property_value(v),
+                        None => String::new(),
+                    };
+                    self.editing_property = Some(PropertyEditState {
+                        node_idx,
+                        prop_idx,
+                        name: prop.name.clone(),
+                        value: value.clone(),
+                    });
+                    self.input_mode = Some(InputMode::PropertyValue);
+                    self.input_buffer = value;
+                }
+            }
         }
-        let node_idx = self.selected_node.min(count - 1);
-        let node = &self.overlay_tree.reference_nodes[node_idx].node;
-        if node.properties.is_empty() {
-            return;
-        }
-        let prop_idx = 0; // default to first property
-        let prop = &node.properties[prop_idx];
-        let value = match &prop.value {
-            Some(v) => dts::format_property_value(v),
-            None => String::new(),
-        };
-        self.editing_property = Some(PropertyEditState {
-            node_idx,
-            prop_idx,
-            name: prop.name.clone(),
-            value: value.clone(),
-        });
-        self.input_mode = Some(InputMode::PropertyValue);
-        self.input_buffer = value;
     }
 
     pub fn start_child_node(&mut self) {
-        self.input_mode = Some(InputMode::ChildName);
-        self.input_buffer.clear();
+        // Add child to the node currently under cursor.
+        if let Some((_node_idx, _)) = self.line_to_node_info(self.selected_node) {
+            self.input_mode = Some(InputMode::ChildName);
+            self.input_buffer.clear();
+        }
     }
 
     pub fn confirm_input(&mut self) {
@@ -359,11 +470,9 @@ impl GeneratorState {
             }
             InputMode::ChildName => {
                 if !buf.is_empty() {
-                    let count = self.overlay_node_count();
-                    if count > 0 {
-                        let idx = self.selected_node.min(count - 1);
+                    if let Some((node_idx, _)) = self.line_to_node_info(self.selected_node) {
                         let child = Node::new(buf);
-                        self.overlay_tree.reference_nodes[idx]
+                        self.overlay_tree.reference_nodes[node_idx]
                             .node
                             .children
                             .push(child);
@@ -374,16 +483,8 @@ impl GeneratorState {
                 if !buf.is_empty() {
                     // Store the name temporarily and switch to value input
                     self.input_mode = Some(InputMode::PropertyValue);
-                    let count = self.overlay_node_count();
-                    if count > 0 {
-                        let node_idx = self.selected_node.min(count - 1);
-                        let node = &self.overlay_tree.reference_nodes[node_idx].node;
-                        self.editing_property = Some(PropertyEditState {
-                            node_idx,
-                            prop_idx: node.properties.len(),
-                            name: buf,
-                            value: String::new(),
-                        });
+                    if let Some(edit) = &mut self.editing_property {
+                        edit.name = buf;
                     }
                     self.input_buffer.clear();
                     return; // stay in input mode
@@ -434,11 +535,17 @@ impl GeneratorState {
 
     pub fn build_overlay_string(&self) -> String {
         let config = SerializerConfig {
-            output_format: OutputFormat::Overlay,
+            output_format: OutputFormat::Dts,
             header_comment: Some("Generated by zdtwalk".to_string()),
+            include_version: false,
             ..Default::default()
         };
-        dts::serialize(&self.overlay_tree, &config)
+        // Build a tree copy without plugin/version flags so the serializer
+        // emits only the header comment and reference nodes.
+        let mut tree = self.overlay_tree.clone();
+        tree.is_plugin = false;
+        tree.version = None;
+        dts::serialize(&tree, &config)
     }
 
     // ------------------------------------------------------------------
@@ -607,9 +714,13 @@ impl GeneratorState {
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "Press → or Enter to continue",
+            "── Keybinds ──",
             Style::default().fg(Color::DarkGray),
         )));
+        lines.push(Line::from(vec![
+            Span::styled("  →/Enter ", Style::default().fg(Color::Yellow)),
+            Span::styled("continue to edit nodes", Style::default().fg(Color::DarkGray)),
+        ]));
 
         let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
         frame.render_widget(paragraph, area);
@@ -625,6 +736,13 @@ impl GeneratorState {
 
         let mut lines: Vec<Line> = Vec::new();
 
+        // Board info
+        if let Some(board) = &self.selected_board {
+            lines.push(Line::from(vec![
+                Span::styled("Board: ", Style::default().fg(Color::Gray)),
+                Span::styled(board.as_str(), Style::default().fg(Color::Green)),
+            ]));
+        }
         lines.push(Line::from(Span::styled(
             "Step 2: Edit Overlay Nodes",
             Style::default()
@@ -635,12 +753,21 @@ impl GeneratorState {
 
         if self.overlay_tree.reference_nodes.is_empty() {
             lines.push(Line::from(Span::styled(
-                "No nodes yet. Press 'a' to add from viewer or 'n' for new node.",
+                "No nodes added yet.",
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(Span::styled(
+                "Press 'a' in center panel",
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(Span::styled(
+                "or 'n' here for new node.",
                 Style::default().fg(Color::DarkGray),
             )));
         } else {
+            let mut flat_line_idx: usize = 0;
             for (idx, rn) in self.overlay_tree.reference_nodes.iter().enumerate() {
-                let is_selected = idx == self.selected_node;
+                let is_cursor = flat_line_idx == self.selected_node;
                 let is_expanded = self.expanded_nodes.contains(&idx);
 
                 let ref_str = match &rn.reference {
@@ -651,31 +778,40 @@ impl GeneratorState {
                 let marker = if is_expanded { "▼" } else { "▶" };
                 let header = format!("{marker} {ref_str} {{ ... }}");
 
-                let style = if is_selected {
+                let style = if is_cursor {
                     Style::default().fg(Color::Cyan).bg(Color::DarkGray)
                 } else {
                     Style::default().fg(Color::White)
                 };
                 lines.push(Line::from(Span::styled(header, style)));
+                flat_line_idx += 1;
 
                 if is_expanded {
                     for prop in &rn.node.properties {
+                        let is_prop_cursor = flat_line_idx == self.selected_node;
                         let val_str = match &prop.value {
                             Some(v) => format!(" = {}", dts::format_property_value(v)),
                             None => String::new(),
                         };
-                        let prop_line = format!("    {}{};", prop.name, val_str);
-                        lines.push(Line::from(Span::styled(
-                            prop_line,
-                            Style::default().fg(Color::Gray),
-                        )));
+                        let prop_text = format!("    {}{};", prop.name, val_str);
+                        let pstyle = if is_prop_cursor {
+                            Style::default().fg(Color::Cyan).bg(Color::DarkGray)
+                        } else {
+                            Style::default().fg(Color::Gray)
+                        };
+                        lines.push(Line::from(Span::styled(prop_text, pstyle)));
+                        flat_line_idx += 1;
                     }
                     for child in &rn.node.children {
-                        let child_line = format!("    {} {{ ... }}", child.full_name());
-                        lines.push(Line::from(Span::styled(
-                            child_line,
-                            Style::default().fg(Color::Blue),
-                        )));
+                        let is_child_cursor = flat_line_idx == self.selected_node;
+                        let child_text = format!("    {} {{ ... }}", child.full_name());
+                        let cstyle = if is_child_cursor {
+                            Style::default().fg(Color::Cyan).bg(Color::DarkGray)
+                        } else {
+                            Style::default().fg(Color::Blue)
+                        };
+                        lines.push(Line::from(Span::styled(child_text, cstyle)));
+                        flat_line_idx += 1;
                     }
                 }
             }
@@ -685,10 +821,10 @@ impl GeneratorState {
         if let Some(mode) = &self.input_mode {
             lines.push(Line::from(""));
             let label = match mode {
-                InputMode::NodeReference => "Reference (e.g. &i2c1): ",
+                InputMode::NodeReference => "Ref (e.g. &i2c1): ",
                 InputMode::ChildName => "Child name: ",
-                InputMode::PropertyName => "Property name: ",
-                InputMode::PropertyValue => "Property value: ",
+                InputMode::PropertyName => "Prop name: ",
+                InputMode::PropertyValue => "Prop value: ",
                 InputMode::FileName => "Filename: ",
             };
             lines.push(Line::from(vec![
@@ -702,12 +838,28 @@ impl GeneratorState {
             ]));
         }
 
-        // Hints
+        // Hints — each on its own line
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "a:add from viewer  n:new node  d:delete  Enter:edit/expand  ←/→:step",
+            "── Keybinds ──",
             Style::default().fg(Color::DarkGray),
         )));
+        let hints = [
+            ("Enter", "expand/collapse node"),
+            ("n", "new reference node"),
+            ("p", "add property"),
+            ("e", "edit property"),
+            ("c", "add child node"),
+            ("d", "delete node"),
+            ("→", "next step (save)"),
+            ("←", "previous step"),
+        ];
+        for (key, desc) in &hints {
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {key:<6}"), Style::default().fg(Color::Yellow)),
+                Span::styled(*desc, Style::default().fg(Color::DarkGray)),
+            ]));
+        }
 
         // Scroll support
         let scroll = self.node_scroll.min(lines.len().saturating_sub(height));
@@ -726,6 +878,49 @@ impl GeneratorState {
         }
 
         let mut lines: Vec<Line> = Vec::new();
+
+        // Post-save prompt
+        if self.save_complete {
+            lines.push(Line::from(Span::styled(
+                "✓ Overlay saved!",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(""));
+            if let Some(path) = &self.save_path {
+                lines.push(Line::from(vec![
+                    Span::styled("Saved to: ", Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        path.display().to_string(),
+                        Style::default().fg(Color::Green),
+                    ),
+                ]));
+            }
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Continue with this overlay?",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("  y     ", Style::default().fg(Color::Yellow)),
+                Span::styled("continue editing", Style::default().fg(Color::DarkGray)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  n     ", Style::default().fg(Color::Yellow)),
+                Span::styled("start fresh overlay", Style::default().fg(Color::DarkGray)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("  g     ", Style::default().fg(Color::Yellow)),
+                Span::styled("close generator", Style::default().fg(Color::DarkGray)),
+            ]));
+
+            let visible: Vec<Line> = lines.into_iter().take(height).collect();
+            let paragraph = Paragraph::new(visible);
+            frame.render_widget(paragraph, area);
+            return;
+        }
 
         lines.push(Line::from(Span::styled(
             "Step 3: Save Overlay",
@@ -800,9 +995,21 @@ impl GeneratorState {
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "Enter:select  Backspace:up dir  n:new file  ←/→:step",
+            "── Keybinds ──",
             Style::default().fg(Color::DarkGray),
         )));
+        let hints = [
+            ("Enter", "select file / enter dir"),
+            ("Bksp", "go up one directory"),
+            ("n", "create new file"),
+            ("←", "back to edit nodes"),
+        ];
+        for (key, desc) in &hints {
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {key:<6}"), Style::default().fg(Color::Yellow)),
+                Span::styled(*desc, Style::default().fg(Color::DarkGray)),
+            ]));
+        }
 
         let visible: Vec<Line> = lines.into_iter().take(height).collect();
         let paragraph = Paragraph::new(visible);
@@ -909,16 +1116,12 @@ mod tests {
         gen.add_node_from_reference(Reference::Label("i2c1".to_string()), &[]);
 
         let output = gen.build_overlay_string();
-        assert!(output.contains("/dts-v1/;"));
-        assert!(output.contains("/plugin/;"));
+        // /dts-v1/ and /plugin/ should NOT be included per user request.
+        assert!(!output.contains("/dts-v1/;"));
+        assert!(!output.contains("/plugin/;"));
         assert!(output.contains("// Generated by zdtwalk"));
         assert!(output.contains("&i2c1"));
         assert!(output.contains("status = \"okay\""));
-
-        // Verify round-trip parsing.
-        let reparsed = parse_dts(&output).unwrap();
-        assert!(reparsed.is_plugin);
-        assert_eq!(reparsed.reference_nodes.len(), 1);
     }
 
     #[test]

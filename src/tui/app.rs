@@ -186,12 +186,6 @@ impl App {
             }
             Message::BoardTreeResolved(tree) => {
                 tui_log!("Board tree resolved ({} reference nodes)", tree.reference_nodes.len());
-                // Open resolved tree in center panel as a virtual tab.
-                let tab_path = PathBuf::from(format!(
-                    "[{}] resolved",
-                    self.right.selected_board.as_deref().unwrap_or("board")
-                ));
-                self.center.set_parsed_dts(tab_path, tree.clone());
                 self.right.set_resolved_tree(tree);
                 self.status_message = Some("Board DTS resolved".to_string());
             }
@@ -290,8 +284,16 @@ impl App {
                 return;
             }
             KeyCode::Char('g') => {
-                self.right.toggle_collapsed();
-                return;
+                // Don't toggle generator while actively typing in it.
+                if self.right.input_mode.is_some()
+                    || self.right.save_input_active
+                    || self.right.save_complete
+                {
+                    // Forward to panel handler instead.
+                } else {
+                    self.right.toggle_collapsed();
+                    return;
+                }
             }
             KeyCode::Char('[') => {
                 self.left_width_pct = self.left_width_pct.saturating_sub(3).max(10);
@@ -328,10 +330,20 @@ impl App {
     }
 
     fn handle_left_key(&mut self, key: KeyEvent) {
+        // When the generator is open and a board is resolved, lock the left
+        // panel to the current board's file list to prevent navigating away.
+        let board_locked = !self.right.collapsed && self.right.resolved_board_tree.is_some();
+
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => self.left.move_down(),
             KeyCode::Char('k') | KeyCode::Up => self.left.move_up(),
             KeyCode::Char('m') => {
+                if board_locked {
+                    self.status_message = Some(
+                        "Left panel locked to board context (close generator to change)".to_string(),
+                    );
+                    return;
+                }
                 self.left.cycle_mode();
                 // Auto-load boards list when cycling into board mode.
                 if self.left.mode == FileTreeMode::BoardFiles && self.left.boards.is_empty() {
@@ -344,6 +356,12 @@ impl App {
                 }
             }
             KeyCode::Char('1') => {
+                if board_locked {
+                    self.status_message = Some(
+                        "Left panel locked to board context (close generator to change)".to_string(),
+                    );
+                    return;
+                }
                 self.left.set_mode(FileTreeMode::BoardFiles);
                 // Auto-load boards list when entering board mode.
                 if self.left.boards.is_empty() {
@@ -356,18 +374,36 @@ impl App {
                 }
             }
             KeyCode::Char('2') => {
+                if board_locked {
+                    self.status_message = Some(
+                        "Left panel locked to board context (close generator to change)".to_string(),
+                    );
+                    return;
+                }
                 self.left.set_mode(FileTreeMode::UserOverlays);
                 if let Some(ws) = &self.workspace {
                     self.trigger_file_scan(ws.clone());
                 }
             }
             KeyCode::Char('3') => {
+                if board_locked {
+                    self.status_message = Some(
+                        "Left panel locked to board context (close generator to change)".to_string(),
+                    );
+                    return;
+                }
                 self.left.set_mode(FileTreeMode::Bindings);
                 if let Some(ws) = &self.workspace {
                     self.trigger_file_scan(ws.clone());
                 }
             }
             KeyCode::Char('b') => {
+                if board_locked {
+                    self.status_message = Some(
+                        "Board locked while generator is open".to_string(),
+                    );
+                    return;
+                }
                 if self.left.mode == FileTreeMode::BoardFiles {
                     self.left.toggle_board_picker();
                     if self.left.board_picker_open {
@@ -382,6 +418,12 @@ impl App {
             }
             KeyCode::Enter => {
                 if self.left.board_picker_open {
+                    if board_locked {
+                        self.status_message = Some(
+                            "Board locked while generator is open".to_string(),
+                        );
+                        return;
+                    }
                     self.left.select_board();
                     if let Some(ws) = &self.workspace {
                         self.trigger_file_scan(ws.clone());
@@ -487,6 +529,28 @@ impl App {
     }
 
     fn handle_right_key(&mut self, key: KeyEvent) {
+        // Handle post-save prompt.
+        if self.right.save_complete {
+            match key.code {
+                KeyCode::Char('y') => {
+                    // Continue editing the same overlay.
+                    self.right.save_complete = false;
+                    self.right.step = super::panels::generator::GeneratorStep::EditNodes;
+                }
+                KeyCode::Char('n') => {
+                    // Start a fresh overlay.
+                    self.right.reset_overlay();
+                }
+                KeyCode::Char('g') => {
+                    // Close the generator panel.
+                    self.right.save_complete = false;
+                    self.right.toggle_collapsed();
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // If in input mode, capture keys for text input.
         if self.right.input_mode.is_some() {
             match key.code {
@@ -561,6 +625,8 @@ impl App {
                                 Ok(_) => {
                                     self.status_message =
                                         Some(format!("Saved to {}", path.display()));
+                                    self.right.save_complete = true;
+                                    self.right.step = super::panels::generator::GeneratorStep::SaveFile;
                                 }
                                 Err(e) => {
                                     self.status_message =
@@ -596,11 +662,7 @@ impl App {
                                     self.status_message =
                                         Some(format!("Overlay saved to {}", path.display()));
                                     tui_log!("Saved overlay: {}", path.display());
-                                    // Open saved file in viewer
-                                    let tx = self.internal_tx.clone();
-                                    tokio::spawn(async move {
-                                        Self::load_file(path, tx).await;
-                                    });
+                                    self.right.save_complete = true;
                                 }
                                 Err(e) => {
                                     self.status_message =
