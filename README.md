@@ -31,6 +31,8 @@ zdtwalk fetches HAL module DTS sources on first run (using sparse git checkouts)
 - **Visual selection + clipboard** — select lines with `V`, yank with `y` (uses OSC 52 for terminal clipboard)
 - **Debug log panel** — toggle with `Ctrl-D` to see workspace discovery, parsing, and fetch activity
 
+To see a full list of keybinds, either press ? in the program or reference [KEYBINDS.md](KEYBINDS.md)
+
 ## Installation
 
 ```sh
@@ -112,6 +114,10 @@ Here are the most common keybindings. See [KEYBINDS.md](KEYBINDS.md) for the ful
 - A **Zephyr workspace** initialized with `west init` and `west update`
 - **git** on your `PATH` (used for sparse HAL checkouts on first run)
 - A terminal with **256-color support** (most modern terminals)
+
+## Long-Term Possibilities
+- Overlay file error checker
+- Analysis for build.dts
 
 ## License
 
