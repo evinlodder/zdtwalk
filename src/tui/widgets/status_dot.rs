@@ -1,5 +1,7 @@
 use ratatui::prelude::*;
 
+use crate::tui::theme;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusColor {
     Okay,
@@ -12,9 +14,9 @@ pub enum StatusColor {
 impl StatusColor {
     pub fn dot_span(self) -> Span<'static> {
         match self {
-            StatusColor::Okay => Span::styled("●", Style::default().fg(Color::Green)),
-            StatusColor::Disabled => Span::styled("●", Style::default().fg(Color::Red)),
-            StatusColor::Unknown => Span::styled("●", Style::default().fg(Color::DarkGray)),
+            StatusColor::Okay => Span::styled("●", Style::default().fg(theme::SUCCESS)),
+            StatusColor::Disabled => Span::styled("●", Style::default().fg(theme::ERROR)),
+            StatusColor::Unknown => Span::styled("●", Style::default().fg(theme::TEXT_DIM)),
             StatusColor::None => Span::raw(" "),
         }
     }

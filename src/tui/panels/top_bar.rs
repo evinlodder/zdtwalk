@@ -5,6 +5,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
+use crate::tui::theme;
 use super::super::app::SearchState;
 
 pub fn render(
@@ -13,36 +14,46 @@ pub fn render(
     search: &SearchState,
     zephyr_version: Option<&str>,
     zephyr_dir: Option<&Path>,
+    selected_board: Option<&str>,
 ) {
     let block = Block::default()
         .borders(Borders::BOTTOM)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(Style::default().fg(theme::BORDER_INACTIVE));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Build the version+path badge text.
+    // Build breadcrumb badge: Zephyr v3.x > workspace > board
+    let sep_style = Style::default().fg(theme::COPPER);
+    let sep = Span::styled(" > ", sep_style);
+
     let version_text = zephyr_version.unwrap_or("...");
-    let path_text = zephyr_dir
-        .map(|p| p.display().to_string())
-        .unwrap_or_default();
-    let full_badge = if path_text.is_empty() {
-        format!("Zephyr {version_text}")
-    } else {
-        format!("Zephyr {version_text} | {path_text}")
-    };
+    let mut badge_spans: Vec<Span> = vec![
+        Span::styled(
+            format!("Zephyr {version_text}"),
+            Style::default().fg(theme::AMBER).add_modifier(Modifier::BOLD),
+        ),
+    ];
+
+    if let Some(dir) = zephyr_dir {
+        let dir_name = dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| dir.display().to_string());
+        badge_spans.push(sep.clone());
+        badge_spans.push(Span::styled(dir_name, Style::default().fg(theme::TEXT_SECONDARY)));
+    }
+
+    if let Some(board) = selected_board {
+        badge_spans.push(sep.clone());
+        badge_spans.push(Span::styled(board.to_string(), Style::default().fg(theme::GOLD)));
+    }
+
+    let badge_line = Line::from(badge_spans);
+    let badge_width: u16 = badge_line.width() as u16;
 
     // Size the right column to fit the badge, but cap it so search bar keeps at least 20 cols.
     let max_right = inner.width.saturating_sub(20);
-    let badge_len = full_badge.len() as u16;
-    let right_width = badge_len.min(max_right);
-
-    // Truncate badge with "..." if it doesn't fit.
-    let badge = if badge_len > right_width {
-        let avail = right_width.saturating_sub(3) as usize;
-        format!("{}...", &full_badge[..avail])
-    } else {
-        full_badge
-    };
+    let right_width = badge_width.min(max_right);
 
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -50,26 +61,24 @@ pub fn render(
         .split(inner);
 
     // Search bar.
-    let search_text = if search.active {
-        format!("/ {}_", search.query)
+    let search_line = if search.active {
+        Line::from(vec![
+            Span::styled("/ ", Style::default().fg(theme::AMBER)),
+            Span::styled(format!("{}_", search.query), Style::default().fg(theme::TEXT)),
+        ])
     } else if search.query.is_empty() {
-        "Press / to search".to_string()
+        Line::from(Span::styled("/ search...", theme::muted()))
     } else {
-        format!("/ {}", search.query)
+        Line::from(vec![
+            Span::styled("/ ", Style::default().fg(theme::AMBER)),
+            Span::styled(search.query.clone(), Style::default().fg(theme::TEXT)),
+        ])
     };
 
-    let search_style = if search.active {
-        Style::default().fg(Color::White)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-
-    let search_widget = Paragraph::new(search_text).style(search_style);
+    let search_widget = Paragraph::new(vec![search_line]);
     frame.render_widget(search_widget, chunks[0]);
 
-    // Version and zephyr path badge.
-    let version_widget = Paragraph::new(badge)
-        .style(Style::default().fg(Color::Cyan))
-        .alignment(Alignment::Right);
+    // Breadcrumb badge on the right.
+    let version_widget = Paragraph::new(vec![badge_line]).alignment(Alignment::Right);
     frame.render_widget(version_widget, chunks[1]);
 }

@@ -1,5 +1,6 @@
 use ratatui::prelude::*;
 
+use crate::tui::theme;
 use super::status_dot::StatusColor;
 
 /// Render a collapsible dropdown row.
@@ -16,7 +17,7 @@ pub fn dropdown_line<'a>(
 
     let mut spans = vec![
         Span::raw(indent),
-        Span::raw(arrow.to_string()),
+        Span::styled(arrow.to_string(), Style::default().fg(theme::TEXT_MUTED)),
     ];
 
     if let Some(color) = status {

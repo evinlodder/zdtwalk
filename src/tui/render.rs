@@ -3,6 +3,7 @@ use ratatui::widgets::Clear;
 
 use super::app::{App, Panel};
 use super::panels::top_bar;
+use super::theme;
 
 /// Master render function — draws all panels each frame.
 pub fn render(frame: &mut Frame, app: &mut App) {
@@ -32,7 +33,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         .workspace
         .as_ref()
         .map(|ws| ws.info.zephyr_dir.as_path());
-    top_bar::render(frame, v_chunks[0], &app.search, zephyr_version, zephyr_dir);
+    let selected_board = app.left.selected_board_name();
+    top_bar::render(frame, v_chunks[0], &app.search, zephyr_version, zephyr_dir, selected_board);
 
     // Main area — horizontal split.
     let main_area = v_chunks[1];
@@ -82,7 +84,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             height: 1,
         };
         let status = ratatui::widgets::Paragraph::new(msg.as_str())
-            .style(Style::default().fg(Color::Yellow).bg(Color::Black));
+            .style(Style::default().fg(theme::AMBER).bg(theme::SURFACE));
         frame.render_widget(status, status_area);
     } else {
         // Show subtle hint when no status message.
@@ -92,8 +94,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             width: size.width,
             height: 1,
         };
-        let hint = ratatui::widgets::Paragraph::new(" ? help")
-            .style(Style::default().fg(Color::DarkGray));
+        let hint = ratatui::widgets::Paragraph::new(Line::from(vec![
+            Span::styled(" ? ", Style::default().fg(theme::GOLD)),
+            Span::styled("help", Style::default().fg(theme::TEXT_DIM)),
+        ]));
         frame.render_widget(hint, hint_area);
     }
 
@@ -171,8 +175,10 @@ fn render_help(frame: &mut Frame, size: Rect) {
 
     let block = ratatui::widgets::Block::default()
         .borders(ratatui::widgets::Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Double)
         .title(" Keybinds (press any key to close) ")
-        .border_style(Style::default().fg(Color::Cyan));
+        .title_style(Style::default().fg(theme::GOLD).add_modifier(Modifier::BOLD))
+        .border_style(Style::default().fg(theme::GOLD));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -180,12 +186,12 @@ fn render_help(frame: &mut Frame, size: Rect) {
     for (section, items) in &help_lines {
         lines.push(Line::from(Span::styled(
             format!("  {section}"),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            theme::section_header(),
         )));
         for (key, desc) in items {
             lines.push(Line::from(vec![
-                Span::styled(format!("    {key:<20}"), Style::default().fg(Color::Yellow)),
-                Span::styled(*desc, Style::default().fg(Color::White)),
+                Span::styled(format!("    {key:<20}"), Style::default().fg(theme::GOLD)),
+                Span::styled(*desc, Style::default().fg(theme::TEXT_SECONDARY)),
             ]));
         }
         lines.push(Line::raw(""));
