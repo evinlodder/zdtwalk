@@ -33,13 +33,23 @@ pub enum InputMode {
     FileName,
 }
 
+/// Describes exactly what a visible line in the EditNodes view points to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NodeLocation {
+    /// A node header. `path` is e.g. "0" (ref node 0) or "0/c1/c0".
+    NodeHeader { path: String },
+    /// A property line within a node.
+    Property { node_path: String, prop_idx: usize },
+}
+
 // ---------------------------------------------------------------------------
 // PropertyEditState
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 pub struct PropertyEditState {
-    pub node_idx: usize,
+    /// Path to the node containing the property (e.g. "0" or "0/c1/c0").
+    pub node_path: String,
     pub prop_idx: usize,
     pub name: String,
     pub value: String,
@@ -59,7 +69,9 @@ pub struct GeneratorState {
     pub board_resolving: bool,
     pub selected_node: usize,
     pub node_scroll: usize,
-    pub expanded_nodes: HashSet<usize>,
+    /// Expanded node paths. "0" is top-level ref node 0, "0/c1" is child 1
+    /// of ref node 0, etc.
+    pub expanded_nodes: HashSet<String>,
     pub editing_property: Option<PropertyEditState>,
     pub input_buffer: String,
     pub input_mode: Option<InputMode>,
@@ -229,63 +241,71 @@ impl GeneratorState {
     }
 
     pub fn delete_selected_node(&mut self) {
-        if let Some((node_idx, sub)) = self.line_to_node_info(self.selected_node) {
-            if sub == 0 {
-                // Delete the whole reference node.
-                self.overlay_tree.reference_nodes.remove(node_idx);
-                self.expanded_nodes.remove(&node_idx);
-                // Shift any expanded indices above the removed one
-                let shifted: HashSet<usize> = self
-                    .expanded_nodes
-                    .iter()
-                    .map(|&i| if i > node_idx { i - 1 } else { i })
-                    .collect();
-                self.expanded_nodes = shifted;
+        let loc = match self.line_to_location(self.selected_node) {
+            Some(l) => l,
+            None => return,
+        };
+        match loc {
+            NodeLocation::NodeHeader { path } => {
+                // Check if this is a top-level ref node (path has no '/').
+                if !path.contains('/') {
+                    let node_idx: usize = match path.parse() {
+                        Ok(i) => i,
+                        Err(_) => return,
+                    };
+                    self.overlay_tree.reference_nodes.remove(node_idx);
+                    // Remove any expanded paths starting with this index and
+                    // shift paths for nodes after the removed one.
+                    let prefix = format!("{node_idx}");
+                    self.expanded_nodes.retain(|p| !p.starts_with(&prefix));
+                    let shifted: HashSet<String> = self
+                        .expanded_nodes
+                        .drain()
+                        .map(|p| shift_path_after_remove(&p, node_idx))
+                        .collect();
+                    self.expanded_nodes = shifted;
+                } else {
+                    // Remove a child node. Parse the parent path and child index.
+                    let (parent_path, child_part) =
+                        path.rsplit_once('/').expect("checked contains /");
+                    let ci: usize = match child_part.strip_prefix('c').and_then(|s| s.parse().ok())
+                    {
+                        Some(i) => i,
+                        None => return,
+                    };
+                    // Remove expanded paths under this child.
+                    self.expanded_nodes.retain(|p| !p.starts_with(&path));
+                    if let Some(parent) = self.node_at_path_mut(parent_path) {
+                        if ci < parent.children.len() {
+                            parent.children.remove(ci);
+                        }
+                    }
+                }
                 let new_count = self.edit_visible_line_count();
                 if new_count == 0 {
                     self.selected_node = 0;
                 } else if self.selected_node >= new_count {
                     self.selected_node = new_count.saturating_sub(1);
                 }
-            } else {
-                // sub >= 1 — delete property or child at that sub-index.
-                let node = &mut self.overlay_tree.reference_nodes[node_idx].node;
-                let prop_idx = sub - 1;
-                if prop_idx < node.properties.len() {
-                    node.properties.remove(prop_idx);
-                    // Adjust cursor
-                    let new_count = self.edit_visible_line_count();
-                    if self.selected_node >= new_count && new_count > 0 {
-                        self.selected_node = new_count - 1;
+            }
+            NodeLocation::Property { node_path, prop_idx } => {
+                if let Some(node) = self.node_at_path_mut(&node_path) {
+                    if prop_idx < node.properties.len() {
+                        node.properties.remove(prop_idx);
                     }
-                } else {
-                    let child_idx = prop_idx - node.properties.len();
-                    if child_idx < node.children.len() {
-                        node.children.remove(child_idx);
-                        let new_count = self.edit_visible_line_count();
-                        if self.selected_node >= new_count && new_count > 0 {
-                            self.selected_node = new_count - 1;
-                        }
-                    }
+                }
+                let new_count = self.edit_visible_line_count();
+                if self.selected_node >= new_count && new_count > 0 {
+                    self.selected_node = new_count - 1;
                 }
             }
         }
     }
 
     pub fn delete_selected_property(&mut self) {
-        let count = self.overlay_node_count();
-        if count == 0 {
-            return;
-        }
-        let node_idx = self.selected_node.min(count - 1);
-        if !self.expanded_nodes.contains(&node_idx) {
-            return;
-        }
-        // Find which property is "selected" — we use a simple heuristic:
-        // if editing_property is active, delete that; otherwise do nothing.
+        // If editing_property is active, delete that; otherwise do nothing.
         if let Some(edit) = self.editing_property.take() {
-            if edit.node_idx < self.overlay_tree.reference_nodes.len() {
-                let node = &mut self.overlay_tree.reference_nodes[edit.node_idx].node;
+            if let Some(node) = self.node_at_path_mut(&edit.node_path) {
                 if edit.prop_idx < node.properties.len() {
                     node.properties.remove(edit.prop_idx);
                 }
@@ -306,34 +326,116 @@ impl GeneratorState {
     fn edit_visible_line_count(&self) -> usize {
         let mut count = 0;
         for (idx, rn) in self.overlay_tree.reference_nodes.iter().enumerate() {
+            let path = idx.to_string();
             count += 1; // node header
-            if self.expanded_nodes.contains(&idx) {
-                count += rn.node.properties.len();
-                count += rn.node.children.len();
-            }
+            count += self.count_node_children_lines(&rn.node, &path);
         }
         count
     }
 
-    /// Map a flat visible-line index to (node_idx, sub_line) where sub_line
-    /// is 0 for the node header, 1..=n for properties, n+1..=n+m for children.
-    pub fn line_to_node_info(&self, line: usize) -> Option<(usize, usize)> {
+    /// Recursively count visible lines for a node's contents (props + children).
+    fn count_node_children_lines(&self, node: &Node, path: &str) -> usize {
+        if !self.expanded_nodes.contains(path) {
+            return 0;
+        }
+        let mut count = node.properties.len();
+        for (ci, child) in node.children.iter().enumerate() {
+            let child_path = format!("{path}/c{ci}");
+            count += 1; // child header
+            count += self.count_node_children_lines(child, &child_path);
+        }
+        count
+    }
+
+    /// Map a flat visible-line index to a `NodeLocation`.
+    pub fn line_to_location(&self, line: usize) -> Option<NodeLocation> {
         let mut cursor = 0;
         for (idx, rn) in self.overlay_tree.reference_nodes.iter().enumerate() {
+            let path = idx.to_string();
             if cursor == line {
-                return Some((idx, 0));
+                return Some(NodeLocation::NodeHeader { path });
             }
             cursor += 1;
-            if self.expanded_nodes.contains(&idx) {
-                let prop_count = rn.node.properties.len();
-                let child_count = rn.node.children.len();
-                if line < cursor + prop_count + child_count {
-                    return Some((idx, line - cursor + 1));
-                }
-                cursor += prop_count + child_count;
+            if let Some(loc) = self.line_to_location_in_node(&rn.node, &path, line, &mut cursor) {
+                return Some(loc);
             }
         }
         None
+    }
+
+    /// Recursively search within a node's contents for the given line index.
+    fn line_to_location_in_node(
+        &self,
+        node: &Node,
+        path: &str,
+        line: usize,
+        cursor: &mut usize,
+    ) -> Option<NodeLocation> {
+        if !self.expanded_nodes.contains(path) {
+            return None;
+        }
+        // Properties
+        for pi in 0..node.properties.len() {
+            if *cursor == line {
+                return Some(NodeLocation::Property {
+                    node_path: path.to_string(),
+                    prop_idx: pi,
+                });
+            }
+            *cursor += 1;
+        }
+        // Children
+        for (ci, child) in node.children.iter().enumerate() {
+            let child_path = format!("{path}/c{ci}");
+            if *cursor == line {
+                return Some(NodeLocation::NodeHeader {
+                    path: child_path,
+                });
+            }
+            *cursor += 1;
+            if let Some(loc) =
+                self.line_to_location_in_node(child, &child_path, line, cursor)
+            {
+                return Some(loc);
+            }
+        }
+        None
+    }
+
+    /// Resolve a path string to a mutable reference to the `Node`.
+    /// Path format: "0" → ref_nodes[0].node, "0/c1" → ref_nodes[0].node.children[1], etc.
+    fn node_at_path_mut(&mut self, path: &str) -> Option<&mut Node> {
+        let mut parts = path.split('/');
+        let root_idx: usize = parts.next()?.parse().ok()?;
+        let rn = self.overlay_tree.reference_nodes.get_mut(root_idx)?;
+        let mut node = &mut rn.node;
+        for part in parts {
+            let ci: usize = part.strip_prefix('c')?.parse().ok()?;
+            node = node.children.get_mut(ci)?;
+        }
+        Some(node)
+    }
+
+    /// Resolve a path string to an immutable reference to the `Node`.
+    fn node_at_path(&self, path: &str) -> Option<&Node> {
+        let mut parts = path.split('/');
+        let root_idx: usize = parts.next()?.parse().ok()?;
+        let rn = self.overlay_tree.reference_nodes.get(root_idx)?;
+        let mut node = &rn.node;
+        for part in parts {
+            let ci: usize = part.strip_prefix('c')?.parse().ok()?;
+            node = node.children.get(ci)?;
+        }
+        Some(node)
+    }
+
+    /// Get the node path for the currently selected line. Returns NodeHeader
+    /// path if on a node, or the parent node_path if on a property.
+    fn selected_node_path(&self) -> Option<String> {
+        match self.line_to_location(self.selected_node)? {
+            NodeLocation::NodeHeader { path } => Some(path),
+            NodeLocation::Property { node_path, .. } => Some(node_path),
+        }
     }
 
     pub fn move_up(&mut self) {
@@ -367,12 +469,13 @@ impl GeneratorState {
         if self.step != GeneratorStep::EditNodes {
             return;
         }
-        // Determine which node the cursor is on.
-        if let Some((node_idx, _sub)) = self.line_to_node_info(self.selected_node) {
-            if self.expanded_nodes.contains(&node_idx) {
-                self.expanded_nodes.remove(&node_idx);
+        if let Some(NodeLocation::NodeHeader { path }) =
+            self.line_to_location(self.selected_node)
+        {
+            if self.expanded_nodes.contains(&path) {
+                self.expanded_nodes.remove(&path);
             } else {
-                self.expanded_nodes.insert(node_idx);
+                self.expanded_nodes.insert(path);
             }
         }
     }
@@ -387,68 +490,68 @@ impl GeneratorState {
     }
 
     pub fn start_add_property(&mut self) {
-        // Determine which node the cursor is on and add a property to it.
-        if let Some((node_idx, _)) = self.line_to_node_info(self.selected_node) {
-            self.input_mode = Some(InputMode::PropertyName);
-            self.input_buffer.clear();
-            // Pre-set the target node so confirm_input knows where to add.
-            self.editing_property = Some(PropertyEditState {
-                node_idx,
-                prop_idx: self.overlay_tree.reference_nodes[node_idx].node.properties.len(),
-                name: String::new(),
-                value: String::new(),
-            });
-        }
+        let node_path = match self.selected_node_path() {
+            Some(p) => p,
+            None => return,
+        };
+        let prop_count = match self.node_at_path(&node_path) {
+            Some(n) => n.properties.len(),
+            None => return,
+        };
+        self.input_mode = Some(InputMode::PropertyName);
+        self.input_buffer.clear();
+        self.editing_property = Some(PropertyEditState {
+            node_path,
+            prop_idx: prop_count,
+            name: String::new(),
+            value: String::new(),
+        });
     }
 
     pub fn start_edit_property(&mut self) {
-        // If cursor is on a property line, edit that property.
-        if let Some((node_idx, sub)) = self.line_to_node_info(self.selected_node) {
-            if sub == 0 {
+        let loc = match self.line_to_location(self.selected_node) {
+            Some(l) => l,
+            None => return,
+        };
+        let (node_path, prop_idx) = match loc {
+            NodeLocation::Property { node_path, prop_idx } => (node_path, prop_idx),
+            NodeLocation::NodeHeader { path } => {
                 // On a node header — try first property.
-                let node = &self.overlay_tree.reference_nodes[node_idx].node;
+                let node = match self.node_at_path(&path) {
+                    Some(n) => n,
+                    None => return,
+                };
                 if node.properties.is_empty() {
                     return;
                 }
-                let prop = &node.properties[0];
-                let value = match &prop.value {
-                    Some(v) => dts::format_property_value(v),
-                    None => String::new(),
-                };
-                self.editing_property = Some(PropertyEditState {
-                    node_idx,
-                    prop_idx: 0,
-                    name: prop.name.clone(),
-                    value: value.clone(),
-                });
-                self.input_mode = Some(InputMode::PropertyValue);
-                self.input_buffer = value;
-            } else {
-                // sub >= 1 — check if this is a property line.
-                let node = &self.overlay_tree.reference_nodes[node_idx].node;
-                let prop_idx = sub - 1;
-                if prop_idx < node.properties.len() {
-                    let prop = &node.properties[prop_idx];
-                    let value = match &prop.value {
-                        Some(v) => dts::format_property_value(v),
-                        None => String::new(),
-                    };
-                    self.editing_property = Some(PropertyEditState {
-                        node_idx,
-                        prop_idx,
-                        name: prop.name.clone(),
-                        value: value.clone(),
-                    });
-                    self.input_mode = Some(InputMode::PropertyValue);
-                    self.input_buffer = value;
-                }
+                (path, 0)
             }
+        };
+        let node = match self.node_at_path(&node_path) {
+            Some(n) => n,
+            None => return,
+        };
+        if prop_idx >= node.properties.len() {
+            return;
         }
+        let prop = &node.properties[prop_idx];
+        let value = match &prop.value {
+            Some(v) => dts::format_property_value(v),
+            None => String::new(),
+        };
+        self.editing_property = Some(PropertyEditState {
+            node_path,
+            prop_idx,
+            name: prop.name.clone(),
+            value: value.clone(),
+        });
+        self.input_mode = Some(InputMode::PropertyValue);
+        self.input_buffer = value;
     }
 
     pub fn start_child_node(&mut self) {
         // Add child to the node currently under cursor.
-        if let Some((_node_idx, _)) = self.line_to_node_info(self.selected_node) {
+        if self.selected_node_path().is_some() {
             self.input_mode = Some(InputMode::ChildName);
             self.input_buffer.clear();
         }
@@ -470,12 +573,11 @@ impl GeneratorState {
             }
             InputMode::ChildName => {
                 if !buf.is_empty() {
-                    if let Some((node_idx, _)) = self.line_to_node_info(self.selected_node) {
+                    if let Some(node_path) = self.selected_node_path() {
                         let child = Node::new(buf);
-                        self.overlay_tree.reference_nodes[node_idx]
-                            .node
-                            .children
-                            .push(child);
+                        if let Some(node) = self.node_at_path_mut(&node_path) {
+                            node.children.push(child);
+                        }
                     }
                 }
             }
@@ -492,11 +594,19 @@ impl GeneratorState {
             }
             InputMode::PropertyValue => {
                 if let Some(edit) = self.editing_property.take() {
-                    if edit.node_idx < self.overlay_tree.reference_nodes.len() {
-                        let node = &mut self.overlay_tree.reference_nodes[edit.node_idx].node;
+                    if let Some(node) = self.node_at_path_mut(&edit.node_path) {
                         let prop = if buf.is_empty() {
                             Property::new_boolean(&edit.name)
+                        } else if let Some(parsed) = dts::parse_property_value_str(&buf) {
+                            // User typed a valid DTS value (cell array, byte
+                            // string, phandle ref, quoted string, etc.).
+                            Property {
+                                name: edit.name,
+                                value: Some(parsed),
+                                labels: Vec::new(),
+                            }
                         } else {
+                            // Fall back to treating the raw text as a string.
                             Property::new_string(&edit.name, &buf)
                         };
                         if edit.prop_idx < node.properties.len() {
@@ -767,8 +877,9 @@ impl GeneratorState {
         } else {
             let mut flat_line_idx: usize = 0;
             for (idx, rn) in self.overlay_tree.reference_nodes.iter().enumerate() {
+                let path = idx.to_string();
                 let is_cursor = flat_line_idx == self.selected_node;
-                let is_expanded = self.expanded_nodes.contains(&idx);
+                let is_expanded = self.expanded_nodes.contains(&path);
 
                 let ref_str = match &rn.reference {
                     Reference::Label(l) => format!("&{l}"),
@@ -787,32 +898,13 @@ impl GeneratorState {
                 flat_line_idx += 1;
 
                 if is_expanded {
-                    for prop in &rn.node.properties {
-                        let is_prop_cursor = flat_line_idx == self.selected_node;
-                        let val_str = match &prop.value {
-                            Some(v) => format!(" = {}", dts::format_property_value(v)),
-                            None => String::new(),
-                        };
-                        let prop_text = format!("    {}{};", prop.name, val_str);
-                        let pstyle = if is_prop_cursor {
-                            Style::default().fg(Color::Cyan).bg(Color::DarkGray)
-                        } else {
-                            Style::default().fg(Color::Gray)
-                        };
-                        lines.push(Line::from(Span::styled(prop_text, pstyle)));
-                        flat_line_idx += 1;
-                    }
-                    for child in &rn.node.children {
-                        let is_child_cursor = flat_line_idx == self.selected_node;
-                        let child_text = format!("    {} {{ ... }}", child.full_name());
-                        let cstyle = if is_child_cursor {
-                            Style::default().fg(Color::Cyan).bg(Color::DarkGray)
-                        } else {
-                            Style::default().fg(Color::Blue)
-                        };
-                        lines.push(Line::from(Span::styled(child_text, cstyle)));
-                        flat_line_idx += 1;
-                    }
+                    self.render_node_contents(
+                        &rn.node,
+                        &path,
+                        1,
+                        &mut lines,
+                        &mut flat_line_idx,
+                    );
                 }
             }
         }
@@ -945,11 +1037,13 @@ impl GeneratorState {
             )));
         } else {
             let scroll = self.save_scroll;
+            let total = self.save_entries.len();
             for (i, entry) in self.save_entries.iter().enumerate().skip(scroll) {
                 let is_selected = i == self.save_selected;
                 let is_dir = self.save_dir.join(entry).is_dir();
-                let prefix = if is_dir { "📁 " } else { "📄 " };
-                let text = format!("{prefix}{entry}");
+                let is_last = i == total - 1;
+                let branch = if is_last { "└── " } else { "├── " };
+                let text = format!("{branch}{entry}");
                 let style = if is_selected {
                     Style::default().fg(Color::Cyan).bg(Color::DarkGray)
                 } else if is_dir {
@@ -1014,6 +1108,78 @@ impl GeneratorState {
         let visible: Vec<Line> = lines.into_iter().take(height).collect();
         let paragraph = Paragraph::new(visible);
         frame.render_widget(paragraph, area);
+    }
+
+    // ---- Recursive node rendering helper ----------------------------
+
+    fn render_node_contents<'a>(
+        &self,
+        node: &Node,
+        path: &str,
+        depth: usize,
+        lines: &mut Vec<Line<'a>>,
+        flat_line_idx: &mut usize,
+    ) {
+        let indent = "    ".repeat(depth);
+
+        // Properties
+        for prop in &node.properties {
+            let is_cursor = *flat_line_idx == self.selected_node;
+            let val_str = match &prop.value {
+                Some(v) => format!(" = {}", dts::format_property_value(v)),
+                None => String::new(),
+            };
+            let prop_text = format!("{indent}{}{};", prop.name, val_str);
+            let pstyle = if is_cursor {
+                Style::default().fg(Color::Cyan).bg(Color::DarkGray)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+            lines.push(Line::from(Span::styled(prop_text, pstyle)));
+            *flat_line_idx += 1;
+        }
+
+        // Children
+        for (ci, child) in node.children.iter().enumerate() {
+            let child_path = format!("{path}/c{ci}");
+            let is_cursor = *flat_line_idx == self.selected_node;
+            let is_expanded = self.expanded_nodes.contains(&child_path);
+            let marker = if is_expanded { "▼" } else { "▶" };
+            let child_text = format!("{indent}{marker} {} {{ ... }}", child.full_name());
+            let cstyle = if is_cursor {
+                Style::default().fg(Color::Cyan).bg(Color::DarkGray)
+            } else {
+                Style::default().fg(Color::Blue)
+            };
+            lines.push(Line::from(Span::styled(child_text, cstyle)));
+            *flat_line_idx += 1;
+
+            if is_expanded {
+                self.render_node_contents(child, &child_path, depth + 1, lines, flat_line_idx);
+            }
+        }
+    }
+}
+
+/// Shift a path string's root index when a ref node at `removed_idx` is removed.
+/// E.g., "3/c1" with removed_idx=1 → "2/c1".
+fn shift_path_after_remove(path: &str, removed_idx: usize) -> String {
+    let (root_part, rest) = match path.split_once('/') {
+        Some((r, rest)) => (r, Some(rest)),
+        None => (path, None),
+    };
+    let root: usize = match root_part.parse() {
+        Ok(i) => i,
+        Err(_) => return path.to_string(),
+    };
+    let new_root = if root > removed_idx {
+        root - 1
+    } else {
+        root
+    };
+    match rest {
+        Some(r) => format!("{new_root}/{r}"),
+        None => new_root.to_string(),
     }
 }
 
@@ -1189,11 +1355,11 @@ mod tests {
         gen.step = GeneratorStep::EditNodes;
         gen.add_node_from_reference(Reference::Label("i2c1".to_string()), &[]);
 
-        assert!(!gen.expanded_nodes.contains(&0));
+        assert!(!gen.expanded_nodes.contains("0"));
         gen.toggle_expand();
-        assert!(gen.expanded_nodes.contains(&0));
+        assert!(gen.expanded_nodes.contains("0"));
         gen.toggle_expand();
-        assert!(!gen.expanded_nodes.contains(&0));
+        assert!(!gen.expanded_nodes.contains("0"));
     }
 
     #[test]

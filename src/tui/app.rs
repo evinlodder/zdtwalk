@@ -614,14 +614,22 @@ impl App {
                     KeyCode::Char('p') => self.right.start_add_property(),
                     KeyCode::Char('e') => self.right.start_edit_property(),
                     KeyCode::Char('d') => self.right.delete_selected_node(),
-                    KeyCode::Right => self.right.next_step(),
+                    KeyCode::Right => {
+                        if self.right.step == GeneratorStep::EditNodes {
+                            if let Some(ws) = &self.workspace {
+                                let root = ws.info.workspace_root.clone();
+                                self.right.init_save_browser(&root);
+                            }
+                        }
+                        self.right.next_step();
+                    }
                     KeyCode::Left => self.right.prev_step(),
                     KeyCode::Esc => self.right.prev_step(),
                     KeyCode::Char('s') => {
                         // Quick save: serialize and write if path is set
-                        if let Some(path) = &self.right.save_path {
+                        if let Some(path) = self.right.save_path.clone() {
                             let content = self.right.build_overlay_string();
-                            match std::fs::write(path, &content) {
+                            match std::fs::write(&path, &content) {
                                 Ok(_) => {
                                     self.status_message =
                                         Some(format!("Saved to {}", path.display()));
@@ -769,7 +777,7 @@ impl App {
             Some(ws) => ws.clone(),
             None => return,
         };
-        let board = match &self.right.selected_board {
+        let board: String = match &self.right.selected_board {
             Some(b) => b.clone(),
             None => return,
         };

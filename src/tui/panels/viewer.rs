@@ -91,7 +91,7 @@ struct Tab {
 impl Tab {
     fn new(path: PathBuf) -> Self {
         Self {
-            mode: ViewerMode::Raw,
+            mode: ViewerMode::Simplified,
             file: path,
             raw_content: None,
             content: ViewContent::None,
