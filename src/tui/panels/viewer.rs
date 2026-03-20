@@ -3,10 +3,11 @@ use std::path::PathBuf;
 
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
 };
 
 use crate::dts::{self, Binding, DeviceTree, Reference};
+use crate::tui::theme;
 
 use super::super::widgets::status_dot::StatusColor;
 
@@ -616,22 +617,14 @@ impl ViewerState {
     // ------------------------------------------------------------------
 
     pub fn render(&mut self, frame: &mut Frame, area: Rect, is_active: bool) {
-        let border_style = if is_active {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(border_style);
+        let block = theme::panel_block("", is_active);
 
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
         if self.tabs.is_empty() {
             let msg = Paragraph::new("Open a file from the left panel")
-                .style(Style::default().fg(Color::DarkGray));
+                .style(theme::muted());
             frame.render_widget(msg, inner);
             return;
         }
@@ -668,17 +661,19 @@ impl ViewerState {
                 spans.push(Span::styled(
                     format!(" {name} "),
                     Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Cyan)
+                        .fg(theme::CURSOR_FG)
+                        .bg(theme::GOLD)
                         .add_modifier(Modifier::BOLD),
                 ));
             } else {
                 spans.push(Span::styled(
                     format!(" {name} "),
-                    Style::default().fg(Color::Gray),
+                    Style::default().fg(theme::TEXT_MUTED),
                 ));
             }
-            spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
+            if i < self.tabs.len() - 1 {
+                spans.push(Span::styled(" ", Style::default().fg(theme::BORDER_INACTIVE)));
+            }
         }
         let line = Line::from(spans);
         frame.render_widget(Paragraph::new(vec![line]), area);
@@ -720,9 +715,9 @@ impl ViewerState {
             String::new()
         };
         let line = Line::from(vec![
-            Span::styled("/", Style::default().fg(Color::Yellow)),
-            Span::styled(query.to_string(), Style::default().fg(Color::White)),
-            Span::styled(match_info, Style::default().fg(Color::DarkGray)),
+            Span::styled("/", Style::default().fg(theme::AMBER)),
+            Span::styled(query.to_string(), Style::default().fg(theme::TEXT)),
+            Span::styled(match_info, Style::default().fg(theme::TEXT_DIM)),
         ]);
         frame.render_widget(Paragraph::new(vec![line]), area);
     }
@@ -877,8 +872,10 @@ fn render_raw(tab: &mut Tab, frame: &mut Frame, area: Rect, search_matches: &[us
     let total = all_lines.len();
     let scroll = tab.scroll.min(total.saturating_sub(height));
 
+    // Reserve 1 col on the right for the scrollbar.
+    let scrollbar_width: usize = 1;
     let gutter_width = 5;
-    let text_width = width.saturating_sub(gutter_width);
+    let text_width = width.saturating_sub(gutter_width + scrollbar_width);
 
     // Visual selection range.
     let sel_range = tab.selection_anchor.map(|a| {
@@ -897,9 +894,9 @@ fn render_raw(tab: &mut Tab, frame: &mut Frame, area: Rect, search_matches: &[us
             let in_sel = sel_range.map_or(false, |(lo, hi)| i >= lo && i <= hi);
             let is_match = search_matches.contains(&i);
             let lineno_style = if is_cursor {
-                Style::default().fg(Color::Yellow)
+                theme::lineno_active()
             } else {
-                Style::default().fg(Color::DarkGray)
+                theme::lineno_inactive()
             };
             let lineno = Span::styled(format!("{:>4} ", i + 1), lineno_style);
 
@@ -909,42 +906,71 @@ fn render_raw(tab: &mut Tab, frame: &mut Frame, area: Rect, search_matches: &[us
             } else {
                 expanded
             };
-            let text_style = if in_sel {
-                Style::default().bg(Color::DarkGray).fg(Color::White)
+
+            // Determine overlay highlight style.
+            let overlay = if in_sel {
+                Some(theme::selection_style())
             } else if is_match && is_cursor {
-                Style::default().bg(Color::Magenta).fg(Color::White)
+                Some(theme::search_match_cursor_style())
             } else if is_match {
-                Style::default().bg(Color::Magenta).fg(Color::White)
+                Some(theme::search_match_style())
             } else if is_cursor {
-                Style::default().bg(Color::DarkGray)
+                Some(Style::default().bg(theme::SELECTION_BG))
             } else {
-                Style::default()
+                None
             };
-            let text = Span::styled(truncated, text_style);
-            Line::from(vec![lineno, text])
+
+            // Tokenize the line for syntax coloring.
+            let token_spans = tokenize_dts_line(&truncated);
+
+            // Apply overlay on top of token styles if needed.
+            let styled_spans = if let Some(ov) = overlay {
+                token_spans.into_iter().map(|s| {
+                    Span::styled(s.content, s.style.patch(ov))
+                }).collect::<Vec<_>>()
+            } else {
+                token_spans
+            };
+
+            let mut spans = vec![lineno];
+            spans.extend(styled_spans);
+            Line::from(spans)
         })
         .collect();
 
+    // Content area (without scrollbar column).
+    let content_area = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width.saturating_sub(scrollbar_width as u16),
+        height: area.height,
+    };
     let paragraph = Paragraph::new(lines);
-    frame.render_widget(paragraph, area);
+    frame.render_widget(paragraph, content_area);
+
+    // Scrollbar on the right edge.
+    render_scrollbar(frame, area, scroll, total, height);
 }
 
 fn render_simplified(tab: &Tab, frame: &mut Frame, area: Rect, search_matches: &[usize]) {
     if tab.simplified_lines.is_empty() {
         let msg = Paragraph::new("Nothing to display")
-            .style(Style::default().fg(Color::DarkGray));
+            .style(theme::muted());
         frame.render_widget(msg, area);
         return;
     }
 
     let height = area.height as usize;
     let offset = tab.simplified_scroll;
+    let total = tab.simplified_lines.len();
 
     let sel_range = tab.selection_anchor.map(|a| {
         let lo = a.min(tab.selected_line);
         let hi = a.max(tab.selected_line);
         (lo, hi)
     });
+
+    let scrollbar_width: u16 = 1;
 
     let lines: Vec<Line> = tab
         .simplified_lines
@@ -960,8 +986,16 @@ fn render_simplified(tab: &Tab, frame: &mut Frame, area: Rect, search_matches: &
         })
         .collect();
 
+    let content_area = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width.saturating_sub(scrollbar_width),
+        height: area.height,
+    };
     let paragraph = Paragraph::new(lines);
-    frame.render_widget(paragraph, area);
+    frame.render_widget(paragraph, content_area);
+
+    render_scrollbar(frame, area, offset, total, height);
 }
 
 fn render_simplified_line(
@@ -973,13 +1007,13 @@ fn render_simplified_line(
 ) -> Line<'static> {
     let indent = "  ".repeat(sline.depth);
     let sel_style = if in_selection {
-        Style::default().fg(Color::White).bg(Color::DarkGray)
+        theme::selection_style()
     } else if is_match && is_cursor {
-        Style::default().fg(Color::White).bg(Color::Magenta)
+        theme::search_match_cursor_style()
     } else if is_match {
-        Style::default().bg(Color::Magenta).fg(Color::White)
+        theme::search_match_style()
     } else if is_cursor {
-        Style::default().fg(Color::Black).bg(Color::Cyan)
+        theme::cursor_style()
     } else {
         Style::default()
     };
@@ -988,11 +1022,11 @@ fn render_simplified_line(
         LineKind::Include(path) => {
             Line::from(vec![
                 Span::raw(indent),
-                Span::styled("#include ", Style::default().fg(Color::DarkGray)),
+                Span::styled("#include ", Style::default().fg(theme::COPPER)),
                 Span::styled(
                     format!("\"{path}\""),
                     Style::default()
-                        .fg(Color::Blue)
+                        .fg(theme::AMBER)
                         .add_modifier(Modifier::UNDERLINED),
                 ),
             ])
@@ -1011,19 +1045,19 @@ fn render_simplified_line(
             };
 
             let dot = match status {
-                StatusColor::Okay => Span::styled("● ", Style::default().fg(Color::Green)),
-                StatusColor::Disabled => Span::styled("● ", Style::default().fg(Color::Red)),
+                StatusColor::Okay => Span::styled("● ", Style::default().fg(theme::SUCCESS)),
+                StatusColor::Disabled => Span::styled("● ", Style::default().fg(theme::ERROR)),
                 StatusColor::Unknown => {
-                    Span::styled("● ", Style::default().fg(Color::DarkGray))
+                    Span::styled("● ", Style::default().fg(theme::TEXT_DIM))
                 }
                 StatusColor::None => Span::raw("  "),
             };
 
             Line::from(vec![
                 Span::raw(indent),
-                Span::raw(arrow),
+                Span::styled(arrow, Style::default().fg(theme::TEXT_MUTED)),
                 dot,
-                Span::styled(name.clone(), Style::default().fg(Color::Yellow)),
+                Span::styled(name.clone(), Style::default().fg(theme::GOLD)),
             ])
             .style(sel_style)
         }
@@ -1035,25 +1069,27 @@ fn render_simplified_line(
             };
             Line::from(vec![
                 Span::raw(indent),
-                Span::styled(name.clone(), Style::default().fg(Color::White)),
-                Span::styled(val_display, Style::default().fg(Color::Gray)),
+                Span::styled(name.clone(), Style::default().fg(theme::TEXT)),
+                Span::styled(val_display, Style::default().fg(theme::TEXT_SECONDARY)),
             ])
             .style(sel_style)
         }
         LineKind::BindingHeader {
             compatible,
             description,
-        } => Line::from(vec![
-            Span::styled(
-                compatible.clone(),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("  "),
-            Span::styled(description.clone(), Style::default().fg(Color::Gray)),
-        ])
-        .style(sel_style),
+        } => {
+            Line::from(vec![
+                Span::styled(
+                    compatible.clone(),
+                    Style::default()
+                        .fg(theme::AMBER)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(description.clone(), Style::default().fg(theme::TEXT_SECONDARY)),
+            ])
+            .style(sel_style)
+        },
         LineKind::BindingProperty {
             name,
             prop_type,
@@ -1066,25 +1102,143 @@ fn render_simplified_line(
 
             let mut spans = vec![
                 Span::raw(indent),
-                Span::raw(arrow),
-                Span::styled(req_marker, Style::default().fg(Color::Red)),
-                Span::styled(name.clone(), Style::default().fg(Color::White)),
+                Span::styled(arrow, Style::default().fg(theme::TEXT_MUTED)),
+                Span::styled(req_marker, Style::default().fg(theme::ERROR)),
+                Span::styled(name.clone(), Style::default().fg(theme::TEXT)),
                 Span::styled(
                     format!(" ({prop_type})"),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(theme::TEXT_MUTED),
                 ),
             ];
 
             if is_expanded && !description.is_empty() {
                 spans.push(Span::styled(
                     format!("  {description}"),
-                    Style::default().fg(Color::Gray),
+                    Style::default().fg(theme::TEXT_SECONDARY),
                 ));
             }
 
             Line::from(spans).style(sel_style)
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Scrollbar
+// ---------------------------------------------------------------------------
+
+/// Render a 1-column scrollbar on the right edge of `area`.
+fn render_scrollbar(frame: &mut Frame, area: Rect, scroll: usize, total: usize, height: usize) {
+    if total <= height || area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let track_height = area.height as usize;
+    let thumb_size = ((height as f64 / total as f64) * track_height as f64)
+        .ceil()
+        .max(1.0) as usize;
+    let thumb_offset =
+        ((scroll as f64 / total as f64) * track_height as f64).floor() as usize;
+    let thumb_offset = thumb_offset.min(track_height.saturating_sub(thumb_size));
+
+    let x = area.x + area.width - 1;
+    for row in 0..track_height {
+        let y = area.y + row as u16;
+        let (ch, color) = if row >= thumb_offset && row < thumb_offset + thumb_size {
+            (theme::SCROLLBAR_THUMB, theme::SCROLLBAR_THUMB_COLOR)
+        } else {
+            (theme::SCROLLBAR_TRACK, theme::SCROLLBAR_TRACK_COLOR)
+        };
+        frame.render_widget(
+            Paragraph::new(ch).style(Style::default().fg(color)),
+            Rect { x, y, width: 1, height: 1 },
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DTS syntax tokenizer (moderate: names + values + keywords)
+// ---------------------------------------------------------------------------
+
+/// Tokenize a single DTS source line into styled spans.
+fn tokenize_dts_line(line: &str) -> Vec<Span<'static>> {
+    let trimmed = line.trim_start();
+
+    // Blank / whitespace-only lines.
+    if trimmed.is_empty() {
+        return vec![Span::raw(line.to_string())];
+    }
+
+    // Full-line comment: // ...
+    if trimmed.starts_with("//") {
+        return vec![Span::styled(line.to_string(), theme::dts_comment())];
+    }
+
+    // Block comment line (heuristic: starts with /* or *)
+    if trimmed.starts_with("/*") || trimmed.starts_with('*') {
+        return vec![Span::styled(line.to_string(), theme::dts_comment())];
+    }
+
+    // #include line
+    if trimmed.starts_with("#include") {
+        let leading = &line[..line.len() - trimmed.len()];
+        let mut spans = vec![Span::raw(leading.to_string())];
+        if let Some(rest) = trimmed.strip_prefix("#include") {
+            spans.push(Span::styled("#include", theme::dts_include_keyword()));
+            spans.push(Span::styled(rest.to_string(), Style::default().fg(theme::AMBER)));
+        }
+        return spans;
+    }
+
+    // /dts-v1/; or /plugin/;
+    if trimmed.starts_with("/dts-v1/") || trimmed.starts_with("/plugin/") {
+        return vec![Span::styled(line.to_string(), theme::dts_keyword())];
+    }
+
+    // &reference lines (e.g. &i2c1 { or &{/soc/...} {)
+    if trimmed.starts_with('&') {
+        let leading = &line[..line.len() - trimmed.len()];
+        let mut spans = vec![Span::raw(leading.to_string())];
+        // Find end of reference token
+        let ref_end = trimmed.find(|c: char| c == ' ' || c == '{' || c == ';').unwrap_or(trimmed.len());
+        spans.push(Span::styled(trimmed[..ref_end].to_string(), theme::dts_reference()));
+        if ref_end < trimmed.len() {
+            spans.push(Span::styled(trimmed[ref_end..].to_string(), Style::default().fg(theme::TEXT_DIM)));
+        }
+        return spans;
+    }
+
+    // Lines with = (property assignment)
+    if let Some(eq_pos) = trimmed.find('=') {
+        let leading = &line[..line.len() - trimmed.len()];
+        let prop_name = &trimmed[..eq_pos].trim_end();
+        let rest = &trimmed[eq_pos..];
+        return vec![
+            Span::raw(leading.to_string()),
+            Span::styled(prop_name.to_string(), theme::dts_property_name()),
+            Span::styled(" ".to_string(), Style::default()),
+            Span::styled(rest.to_string(), Style::default().fg(theme::TEXT_SECONDARY)),
+        ];
+    }
+
+    // Lines ending with { — node header
+    if trimmed.ends_with('{') {
+        let leading = &line[..line.len() - trimmed.len()];
+        let name_part = trimmed.trim_end_matches('{').trim_end();
+        return vec![
+            Span::raw(leading.to_string()),
+            Span::styled(name_part.to_string(), theme::dts_node_name()),
+            Span::styled(" {", Style::default().fg(theme::TEXT_DIM)),
+        ];
+    }
+
+    // Closing brace
+    if trimmed.starts_with('}') {
+        return vec![Span::styled(line.to_string(), Style::default().fg(theme::TEXT_DIM))];
+    }
+
+    // Default: plain text
+    vec![Span::raw(line.to_string())]
 }
 
 // ---------------------------------------------------------------------------

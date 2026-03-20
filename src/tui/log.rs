@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Paragraph},
+    widgets::Paragraph,
 };
 
 // ---------------------------------------------------------------------------
@@ -112,9 +112,9 @@ impl DebugPanel {
             .take(height)
             .map(|entry| {
                 let (tag, color) = match entry.level {
-                    LogLevel::Info => ("[INFO] ", Color::Cyan),
-                    LogLevel::Warn => ("[WARN] ", Color::Yellow),
-                    LogLevel::Error => ("[ERR]  ", Color::Red),
+                    LogLevel::Info => ("[INFO] ", crate::tui::theme::COPPER),
+                    LogLevel::Warn => ("[WARN] ", crate::tui::theme::AMBER),
+                    LogLevel::Error => ("[ERR]  ", crate::tui::theme::ERROR),
                 };
                 Line::from(vec![
                     Span::styled(tag, Style::default().fg(color)),
@@ -123,11 +123,11 @@ impl DebugPanel {
             })
             .collect();
 
-        let border_color = if is_active { Color::Cyan } else { Color::DarkGray };
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" Debug Log ({total}) "))
-            .border_style(Style::default().fg(border_color));
+        let title = format!(" Debug Log ({total}) ");
+        let block = crate::tui::theme::panel_block(
+            &title,
+            is_active,
+        );
 
         let paragraph = Paragraph::new(lines).block(block);
         frame.render_widget(paragraph, area);

@@ -2,9 +2,10 @@ use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{List, ListItem, Paragraph},
 };
 
+use crate::tui::theme;
 use super::super::workspace::FileEntry;
 
 // ---------------------------------------------------------------------------
@@ -201,26 +202,17 @@ impl FileTreeState {
     // ------------------------------------------------------------------
 
     pub fn render(&self, frame: &mut Frame, area: Rect, is_active: bool) {
-        let border_style = if is_active {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-
         let mode_line = self.mode.label();
         let title = if self.mode == FileTreeMode::BoardFiles {
             let board = self
                 .selected_board_name()
-                .unwrap_or("(none — press b)");
+                .unwrap_or("(none -- press b)");
             format!(" {mode_line} : {board} ")
         } else {
             format!(" {mode_line} ")
         };
 
-        let block = Block::default()
-            .title(title)
-            .borders(Borders::ALL)
-            .border_style(border_style);
+        let block = theme::panel_block(&title, is_active);
 
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -239,7 +231,7 @@ impl FileTreeState {
             } else {
                 "Loading boards..."
             };
-            let p = Paragraph::new(msg).style(Style::default().fg(Color::DarkGray));
+            let p = Paragraph::new(msg).style(theme::muted());
             frame.render_widget(p, area);
             return;
         }
@@ -250,7 +242,7 @@ impl FileTreeState {
         };
 
         if visible_boards.is_empty() {
-            let p = Paragraph::new("No matching boards").style(Style::default().fg(Color::DarkGray));
+            let p = Paragraph::new("No matching boards").style(theme::muted());
             frame.render_widget(p, area);
             return;
         }
@@ -266,7 +258,7 @@ impl FileTreeState {
             .take(height)
             .map(|(i, (_, name))| {
                 let style = if i == self.selected {
-                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                    theme::cursor_style()
                 } else {
                     Style::default()
                 };
@@ -294,7 +286,7 @@ impl FileTreeState {
                 FileTreeMode::UserOverlays => "No overlay files found",
                 FileTreeMode::Bindings => "No binding files found",
             };
-            let p = Paragraph::new(msg).style(Style::default().fg(Color::DarkGray));
+            let p = Paragraph::new(msg).style(theme::muted());
             frame.render_widget(p, area);
             return;
         }
@@ -306,9 +298,9 @@ impl FileTreeState {
             .take(height)
             .map(|(i, entry)| {
                 let style = if i == self.selected {
-                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                    theme::cursor_style()
                 } else {
-                    Style::default()
+                    file_entry_style(&entry.name)
                 };
                 let name = truncate_str(&entry.name, max_width);
                 ListItem::new(name).style(style)
@@ -317,6 +309,19 @@ impl FileTreeState {
 
         let list = List::new(items);
         frame.render_widget(list, area);
+    }
+}
+
+/// Style a file entry based on its extension.
+fn file_entry_style(name: &str) -> Style {
+    if name.ends_with(".overlay") || name.ends_with(".dtso") {
+        Style::default().fg(theme::AMBER)
+    } else if name.ends_with(".yaml") || name.ends_with(".yml") {
+        Style::default().fg(theme::COPPER)
+    } else if name.ends_with(".dtsi") {
+        Style::default().fg(theme::TEXT_SECONDARY)
+    } else {
+        Style::default().fg(theme::TEXT)
     }
 }
 

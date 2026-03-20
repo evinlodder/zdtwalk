@@ -3,13 +3,14 @@ use std::path::{Path, PathBuf};
 
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
 };
 
 use crate::dts::{
     self, Binding, DeviceTree, DtsVersion, Node, OutputFormat, Property, Reference, ReferenceNode,
     SerializerConfig,
 };
+use crate::tui::theme;
 
 const OVERLAY_EXTENSIONS: &[&str] = &[".overlay", ".dtso"];
 
@@ -757,24 +758,34 @@ impl GeneratorState {
     // ------------------------------------------------------------------
 
     pub fn render(&self, frame: &mut Frame, area: Rect, is_active: bool) {
-        let border_style = if is_active {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-
-        let block = Block::default()
-            .title(" DTS Generator (g to toggle) ")
-            .borders(Borders::ALL)
-            .border_style(border_style);
+        let block = theme::panel_block(" Generator ", is_active);
 
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
+        // Step progress bar at top.
+        let progress_area = Rect { x: inner.x, y: inner.y, width: inner.width, height: 1 };
+        let (current_step, completed) = match self.step {
+            GeneratorStep::SelectBoard => (0, 0),
+            GeneratorStep::EditNodes => (1, 1),
+            GeneratorStep::SaveFile => (2, 2),
+        };
+        frame.render_widget(
+            Paragraph::new(vec![theme::step_progress_line(current_step, completed)]),
+            progress_area,
+        );
+
+        let content_area = Rect {
+            x: inner.x,
+            y: inner.y + 2,
+            width: inner.width,
+            height: inner.height.saturating_sub(2),
+        };
+
         match self.step {
-            GeneratorStep::SelectBoard => self.render_select_board(frame, inner),
-            GeneratorStep::EditNodes => self.render_edit_nodes(frame, inner),
-            GeneratorStep::SaveFile => self.render_save_file(frame, inner),
+            GeneratorStep::SelectBoard => self.render_select_board(frame, content_area),
+            GeneratorStep::EditNodes => self.render_edit_nodes(frame, content_area),
+            GeneratorStep::SaveFile => self.render_save_file(frame, content_area),
         }
     }
 
@@ -783,53 +794,47 @@ impl GeneratorState {
     fn render_select_board(&self, frame: &mut Frame, area: Rect) {
         let mut lines: Vec<Line> = Vec::new();
 
-        lines.push(Line::from(Span::styled(
-            "Step 1: Select Board",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )));
         lines.push(Line::from(""));
 
         match &self.selected_board {
             Some(name) => {
                 lines.push(Line::from(vec![
-                    Span::styled("Board: ", Style::default().fg(Color::Gray)),
-                    Span::styled(name.as_str(), Style::default().fg(Color::Green)),
+                    Span::styled("Board: ", theme::label()),
+                    Span::styled(name.as_str(), Style::default().fg(theme::GOLD)),
                 ]));
 
                 let status = if self.board_resolving {
-                    Span::styled("Resolving...", Style::default().fg(Color::Yellow))
+                    Span::styled("Resolving...", Style::default().fg(theme::AMBER))
                 } else if self.resolved_board_tree.is_some() {
-                    Span::styled("Resolved ✓", Style::default().fg(Color::Green))
+                    Span::styled("Resolved", theme::success())
                 } else {
-                    Span::styled("Not resolved", Style::default().fg(Color::DarkGray))
+                    Span::styled("Not resolved", theme::muted())
                 };
                 lines.push(Line::from(vec![
-                    Span::styled("Status: ", Style::default().fg(Color::Gray)),
+                    Span::styled("Status: ", theme::label()),
                     status,
                 ]));
             }
             None => {
                 lines.push(Line::from(Span::styled(
                     "No board selected",
-                    Style::default().fg(Color::DarkGray),
+                    theme::muted(),
                 )));
                 lines.push(Line::from(Span::styled(
                     "Select a board in the left panel",
-                    Style::default().fg(Color::DarkGray),
+                    theme::muted(),
                 )));
             }
         }
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "── Keybinds ──",
-            Style::default().fg(Color::DarkGray),
+            "-- Keybinds --",
+            theme::label(),
         )));
         lines.push(Line::from(vec![
-            Span::styled("  →/Enter ", Style::default().fg(Color::Yellow)),
-            Span::styled("continue to edit nodes", Style::default().fg(Color::DarkGray)),
+            Span::styled("  →/Enter ", theme::keybind_key()),
+            Span::styled("continue to edit nodes", theme::keybind_desc()),
         ]));
 
         let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
@@ -849,30 +854,24 @@ impl GeneratorState {
         // Board info
         if let Some(board) = &self.selected_board {
             lines.push(Line::from(vec![
-                Span::styled("Board: ", Style::default().fg(Color::Gray)),
-                Span::styled(board.as_str(), Style::default().fg(Color::Green)),
+                Span::styled("Board: ", theme::label()),
+                Span::styled(board.as_str(), Style::default().fg(theme::GOLD)),
             ]));
         }
-        lines.push(Line::from(Span::styled(
-            "Step 2: Edit Overlay Nodes",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )));
         lines.push(Line::from(""));
 
         if self.overlay_tree.reference_nodes.is_empty() {
             lines.push(Line::from(Span::styled(
                 "No nodes added yet.",
-                Style::default().fg(Color::DarkGray),
+                theme::muted(),
             )));
             lines.push(Line::from(Span::styled(
                 "Press 'a' in center panel",
-                Style::default().fg(Color::DarkGray),
+                theme::muted(),
             )));
             lines.push(Line::from(Span::styled(
                 "or 'n' here for new node.",
-                Style::default().fg(Color::DarkGray),
+                theme::muted(),
             )));
         } else {
             let mut flat_line_idx: usize = 0;
@@ -890,9 +889,9 @@ impl GeneratorState {
                 let header = format!("{marker} {ref_str} {{ ... }}");
 
                 let style = if is_cursor {
-                    Style::default().fg(Color::Cyan).bg(Color::DarkGray)
+                    theme::cursor_style()
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(theme::TEXT)
                 };
                 lines.push(Line::from(Span::styled(header, style)));
                 flat_line_idx += 1;
@@ -920,21 +919,19 @@ impl GeneratorState {
                 InputMode::FileName => "Filename: ",
             };
             lines.push(Line::from(vec![
-                Span::styled(label, Style::default().fg(Color::Yellow)),
+                Span::styled(label, theme::input_label()),
                 Span::styled(
-                    &self.input_buffer,
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::UNDERLINED),
+                    format!("{}|", &self.input_buffer),
+                    theme::input_field(),
                 ),
             ]));
         }
 
-        // Hints — each on its own line
+        // Hints
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "── Keybinds ──",
-            Style::default().fg(Color::DarkGray),
+            "-- Keybinds --",
+            theme::label(),
         )));
         let hints = [
             ("Enter", "expand/collapse node"),
@@ -948,8 +945,8 @@ impl GeneratorState {
         ];
         for (key, desc) in &hints {
             lines.push(Line::from(vec![
-                Span::styled(format!("  {key:<6}"), Style::default().fg(Color::Yellow)),
-                Span::styled(*desc, Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("  {key:<6}"), theme::keybind_key()),
+                Span::styled(*desc, theme::keybind_desc()),
             ]));
         }
 
@@ -974,38 +971,38 @@ impl GeneratorState {
         // Post-save prompt
         if self.save_complete {
             lines.push(Line::from(Span::styled(
-                "✓ Overlay saved!",
+                "Overlay saved!",
                 Style::default()
-                    .fg(Color::Green)
+                    .fg(theme::SUCCESS)
                     .add_modifier(Modifier::BOLD),
             )));
             lines.push(Line::from(""));
             if let Some(path) = &self.save_path {
                 lines.push(Line::from(vec![
-                    Span::styled("Saved to: ", Style::default().fg(Color::Gray)),
+                    Span::styled("Saved to: ", theme::label()),
                     Span::styled(
                         path.display().to_string(),
-                        Style::default().fg(Color::Green),
+                        theme::success(),
                     ),
                 ]));
             }
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 "Continue with this overlay?",
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(theme::AMBER),
             )));
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("  y     ", Style::default().fg(Color::Yellow)),
-                Span::styled("continue editing", Style::default().fg(Color::DarkGray)),
+                Span::styled("  y     ", theme::keybind_key()),
+                Span::styled("continue editing", theme::keybind_desc()),
             ]));
             lines.push(Line::from(vec![
-                Span::styled("  n     ", Style::default().fg(Color::Yellow)),
-                Span::styled("start fresh overlay", Style::default().fg(Color::DarkGray)),
+                Span::styled("  n     ", theme::keybind_key()),
+                Span::styled("start fresh overlay", theme::keybind_desc()),
             ]));
             lines.push(Line::from(vec![
-                Span::styled("  g     ", Style::default().fg(Color::Yellow)),
-                Span::styled("close generator", Style::default().fg(Color::DarkGray)),
+                Span::styled("  g     ", theme::keybind_key()),
+                Span::styled("close generator", theme::keybind_desc()),
             ]));
 
             let visible: Vec<Line> = lines.into_iter().take(height).collect();
@@ -1014,26 +1011,20 @@ impl GeneratorState {
             return;
         }
 
-        lines.push(Line::from(Span::styled(
-            "Step 3: Save Overlay",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )));
         lines.push(Line::from(""));
 
         // Current directory
         let dir_display = self.save_dir.display().to_string();
         lines.push(Line::from(vec![
-            Span::styled("Dir: ", Style::default().fg(Color::Gray)),
-            Span::styled(dir_display, Style::default().fg(Color::Blue)),
+            Span::styled("Dir: ", theme::label()),
+            Span::styled(dir_display, Style::default().fg(theme::COPPER)),
         ]));
         lines.push(Line::from(""));
 
         if self.save_entries.is_empty() {
             lines.push(Line::from(Span::styled(
                 "(empty directory)",
-                Style::default().fg(Color::DarkGray),
+                theme::muted(),
             )));
         } else {
             let scroll = self.save_scroll;
@@ -1045,11 +1036,11 @@ impl GeneratorState {
                 let branch = if is_last { "└── " } else { "├── " };
                 let text = format!("{branch}{entry}");
                 let style = if is_selected {
-                    Style::default().fg(Color::Cyan).bg(Color::DarkGray)
+                    theme::cursor_style()
                 } else if is_dir {
-                    Style::default().fg(Color::Blue)
+                    Style::default().fg(theme::COPPER)
                 } else {
-                    Style::default().fg(Color::White)
+                    Style::default().fg(theme::TEXT)
                 };
                 lines.push(Line::from(Span::styled(text, style)));
             }
@@ -1060,12 +1051,10 @@ impl GeneratorState {
         // Filename input area
         if self.save_input_active {
             lines.push(Line::from(vec![
-                Span::styled("Filename: ", Style::default().fg(Color::Yellow)),
+                Span::styled("Filename: ", theme::input_label()),
                 Span::styled(
-                    &self.save_input,
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::UNDERLINED),
+                    format!("{}|", &self.save_input),
+                    theme::input_field(),
                 ),
             ]));
         }
@@ -1073,24 +1062,24 @@ impl GeneratorState {
         if self.confirm_overwrite {
             lines.push(Line::from(Span::styled(
                 "File exists! Press Enter to overwrite, Esc to cancel.",
-                Style::default().fg(Color::Red),
+                Style::default().fg(theme::ERROR).add_modifier(Modifier::BOLD),
             )));
         }
 
         if let Some(path) = &self.save_path {
             lines.push(Line::from(vec![
-                Span::styled("Save to: ", Style::default().fg(Color::Gray)),
+                Span::styled("Save to: ", theme::label()),
                 Span::styled(
                     path.display().to_string(),
-                    Style::default().fg(Color::Green),
+                    theme::success(),
                 ),
             ]));
         }
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "── Keybinds ──",
-            Style::default().fg(Color::DarkGray),
+            "-- Keybinds --",
+            theme::label(),
         )));
         let hints = [
             ("Enter", "select file / enter dir"),
@@ -1100,8 +1089,8 @@ impl GeneratorState {
         ];
         for (key, desc) in &hints {
             lines.push(Line::from(vec![
-                Span::styled(format!("  {key:<6}"), Style::default().fg(Color::Yellow)),
-                Span::styled(*desc, Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("  {key:<6}"), theme::keybind_key()),
+                Span::styled(*desc, theme::keybind_desc()),
             ]));
         }
 
@@ -1131,9 +1120,9 @@ impl GeneratorState {
             };
             let prop_text = format!("{indent}{}{};", prop.name, val_str);
             let pstyle = if is_cursor {
-                Style::default().fg(Color::Cyan).bg(Color::DarkGray)
+                theme::cursor_style()
             } else {
-                Style::default().fg(Color::Gray)
+                Style::default().fg(theme::TEXT_SECONDARY)
             };
             lines.push(Line::from(Span::styled(prop_text, pstyle)));
             *flat_line_idx += 1;
@@ -1147,9 +1136,9 @@ impl GeneratorState {
             let marker = if is_expanded { "▼" } else { "▶" };
             let child_text = format!("{indent}{marker} {} {{ ... }}", child.full_name());
             let cstyle = if is_cursor {
-                Style::default().fg(Color::Cyan).bg(Color::DarkGray)
+                theme::cursor_style()
             } else {
-                Style::default().fg(Color::Blue)
+                Style::default().fg(theme::COPPER)
             };
             lines.push(Line::from(Span::styled(child_text, cstyle)));
             *flat_line_idx += 1;

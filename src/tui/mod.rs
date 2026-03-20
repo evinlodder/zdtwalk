@@ -3,6 +3,7 @@ mod event;
 pub mod log;
 mod panels;
 mod render;
+pub mod theme;
 mod widgets;
 mod workspace;
 
