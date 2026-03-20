@@ -6,6 +6,7 @@
         "cargo run": true,
         "printf": true,
         "cp": true,
-        "cargo check": true
+        "cargo check": true,
+        "cargo package": true
     }
 }

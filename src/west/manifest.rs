@@ -65,6 +65,7 @@ pub struct Project {
 
 impl ManifestContent {
     /// Return only projects whose `groups` list contains `"hal"`.
+    #[allow(dead_code)]
     pub fn hal_projects(&self) -> Vec<&Project> {
         self.projects
             .iter()
@@ -121,7 +122,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn example_manifest() -> WestManifest {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examplewest.yml");
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/examplewest.yml");
         parse_west_manifest(&path).expect("failed to parse examplewest.yml")
     }
 

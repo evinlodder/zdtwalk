@@ -11,8 +11,8 @@ use super::panels::generator::GeneratorState;
 use super::panels::viewer::ViewerState;
 use super::workspace::WorkspaceState;
 use crate::dts::{self, Binding, DeviceTree};
-use crate::west::fetch::HalDtsEntry;
-use crate::{tui_log, tui_warn, tui_error};
+use crate::west::HalDtsEntry;
+use crate::{tui_log, tui_error};
 
 // ---------------------------------------------------------------------------
 // Panel focus
@@ -65,6 +65,7 @@ pub struct SearchState {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum Message {
     Key(KeyEvent),
     Tick,
@@ -77,6 +78,7 @@ pub enum Message {
     BindingParsed(PathBuf, Binding),
     FileContent(PathBuf, String),
     BoardTreeResolved(DeviceTree),
+    #[allow(dead_code)]
     BindingsLoaded(HashMap<String, Binding>),
     StatusUpdate(String),
     Error(String),

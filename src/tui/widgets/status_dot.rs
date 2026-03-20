@@ -12,6 +12,7 @@ pub enum StatusColor {
 }
 
 impl StatusColor {
+    #[allow(dead_code)]
     pub fn dot_span(self) -> Span<'static> {
         match self {
             StatusColor::Okay => Span::styled("●", Style::default().fg(theme::SUCCESS)),

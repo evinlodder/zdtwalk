@@ -7,6 +7,5 @@ pub mod version;
 
 pub use discovery::find_workspace;
 pub use error::WestError;
-pub use fetch::{DtsSource, HalDtsEntry};
-pub use manifest::parse_west_manifest;
+pub use fetch::HalDtsEntry;
 pub use version::get_zephyr_version;

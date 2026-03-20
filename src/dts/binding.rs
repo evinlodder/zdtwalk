@@ -124,6 +124,7 @@ impl IncludeEntry {
     }
 
     /// If this is a filtered include, return the filter details.
+    #[allow(dead_code)]
     pub fn filter(&self) -> Option<&FilteredInclude> {
         match self {
             IncludeEntry::Name(_) => None,
@@ -325,6 +326,7 @@ pub fn deserialize_binding(yaml: &str) -> Result<Binding, super::Error> {
 }
 
 /// Deserialize a Zephyr devicetree binding from a byte reader.
+#[allow(dead_code)]
 pub fn deserialize_binding_from_reader<R: std::io::Read>(
     reader: R,
 ) -> Result<Binding, super::Error> {
@@ -341,7 +343,7 @@ mod tests {
 
     #[test]
     fn full_stm32_binding() {
-        let yaml = include_str!("../../test_binding.yaml");
+        let yaml = include_str!("../../tests/data/test_binding.yaml");
         let binding = deserialize_binding(yaml).unwrap();
 
         assert_eq!(

@@ -154,16 +154,19 @@ impl Node {
     }
 
     /// Find a direct child node by node name (ignoring unit address).
+    #[allow(dead_code)]
     pub fn child(&self, name: &str) -> Option<&Node> {
         self.children.iter().find(|c| c.name == name)
     }
 
     /// Find a direct child by full name (`name@unit_address`).
+    #[allow(dead_code)]
     pub fn child_by_full_name(&self, full_name: &str) -> Option<&Node> {
         self.children.iter().find(|c| c.full_name() == full_name)
     }
 
     /// Collect all nodes (recursively) that carry the given label.
+    #[allow(dead_code)]
     pub fn find_by_label(&self, label: &str) -> Vec<&Node> {
         let mut results = Vec::new();
         if self.labels.iter().any(|l| l == label) {
@@ -176,6 +179,7 @@ impl Node {
     }
 
     /// Walk every node depth-first, calling `f(node, depth)`.
+    #[allow(dead_code)]
     pub fn walk<F: FnMut(&Node, usize)>(&self, f: &mut F, depth: usize) {
         f(self, depth);
         for child in &self.children {
@@ -218,6 +222,7 @@ impl Property {
         }
     }
 
+    #[allow(dead_code)]
     pub fn new_cells(name: impl Into<String>, cells: Vec<Cell>) -> Self {
         Self {
             name: name.into(),
@@ -226,6 +231,7 @@ impl Property {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_boolean(&self) -> bool {
         self.value.is_none()
     }
@@ -242,6 +248,7 @@ impl Property {
     }
 
     /// Try to get the value as a string list (comma-separated strings).
+    #[allow(dead_code)]
     pub fn as_string_list(&self) -> Option<Vec<&str>> {
         let val = self.value.as_ref()?;
         let mut strings = Vec::new();
@@ -256,6 +263,7 @@ impl Property {
     }
 
     /// Try to get the value as a flat list of u64 cell values (no references / expressions).
+    #[allow(dead_code)]
     pub fn as_u64_cells(&self) -> Option<Vec<u64>> {
         let val = self.value.as_ref()?;
         if val.0.len() != 1 {

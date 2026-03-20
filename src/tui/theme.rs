@@ -127,6 +127,7 @@ pub fn section_header() -> Style {
 }
 
 /// Step title (e.g. "Step 1: Select Board").
+#[allow(dead_code)]
 pub fn step_title() -> Style {
     Style::default().fg(AMBER).add_modifier(Modifier::BOLD)
 }
@@ -144,6 +145,7 @@ pub fn input_field() -> Style {
 }
 
 /// Status / hint text in the bottom bar.
+#[allow(dead_code)]
 pub fn status_hint() -> Style {
     Style::default().fg(TEXT_DIM)
 }
@@ -154,6 +156,7 @@ pub fn success() -> Style {
 }
 
 /// Error / warning message.
+#[allow(dead_code)]
 pub fn error() -> Style {
     Style::default().fg(ERROR)
 }
@@ -212,6 +215,7 @@ pub fn dts_include_keyword() -> Style {
 }
 
 /// DTS string values (`"..."`) and angle-bracket values (`<...>`).
+#[allow(dead_code)]
 pub fn dts_string() -> Style {
     Style::default().fg(TEXT_SECONDARY)
 }
