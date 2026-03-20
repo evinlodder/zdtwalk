@@ -31,6 +31,7 @@ pub enum InputMode {
     ChildName,
     PropertyName,
     PropertyValue,
+    #[allow(dead_code)]
     FileName,
 }
 
@@ -48,6 +49,7 @@ pub enum NodeLocation {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct PropertyEditState {
     /// Path to the node containing the property (e.g. "0" or "0/c1/c0").
     pub node_path: String,
@@ -303,6 +305,7 @@ impl GeneratorState {
         }
     }
 
+    #[allow(dead_code)]
     pub fn delete_selected_property(&mut self) {
         // If editing_property is active, delete that; otherwise do nothing.
         if let Some(edit) = self.editing_property.take() {
@@ -314,6 +317,7 @@ impl GeneratorState {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get_binding_for_node<'a>(&'a self, node: &Node) -> Option<&'a Binding> {
         let compat = node.property("compatible")?.as_string()?;
         self.board_bindings.get(compat)
@@ -1179,7 +1183,6 @@ fn shift_path_after_remove(path: &str, removed_idx: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dts::parser::parse_dts;
 
     #[test]
     fn generator_initial_state() {

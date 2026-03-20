@@ -5,11 +5,8 @@ pub mod parser;
 pub mod resolver;
 pub mod serializer;
 
-pub use binding::{
-    deserialize_binding, deserialize_binding_from_reader, Binding, BindingInclude, ChildBinding,
-    FilteredInclude, IncludeEntry, PropertySpec, PropertyType, Value,
-};
-pub use error::{Error, ParseError, ParseErrorKind};
+pub use binding::{deserialize_binding, Binding};
+pub use error::Error;
 pub use model::*;
 pub use parser::{parse_dts, parse_property_value_str};
 pub use resolver::Resolver;

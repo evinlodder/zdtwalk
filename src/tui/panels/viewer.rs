@@ -608,6 +608,7 @@ impl ViewerState {
     }
 
     /// Check whether a given line index is a search match (for rendering).
+    #[allow(dead_code)]
     fn is_search_match(&self, line_idx: usize) -> bool {
         self.search_matches.contains(&line_idx)
     }

@@ -6,6 +6,7 @@ use super::status_dot::StatusColor;
 /// Render a collapsible dropdown row.
 ///
 /// Returns a `Line` with: indent + arrow + optional status dot + label.
+#[allow(dead_code)]
 pub fn dropdown_line<'a>(
     label: &str,
     expanded: bool,

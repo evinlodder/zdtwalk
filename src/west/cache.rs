@@ -28,6 +28,7 @@ pub fn bindings_cache_path(sdk_version: &str, project_name: &str) -> Result<Path
 }
 
 /// Check whether DTS files are already cached for this project+version.
+#[allow(dead_code)]
 pub fn is_cached(sdk_version: &str, project_name: &str) -> Result<bool, WestError> {
     let dts_dir = dts_cache_path(sdk_version, project_name)?;
     if dts_dir.is_dir() {

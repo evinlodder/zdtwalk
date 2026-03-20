@@ -2,6 +2,13 @@
 name = "zdtwalk"
 version = "0.1.0"
 edition = "2021"
+description = "A terminal UI for exploring and editing Zephyr device trees"
+authors = ["Evin Lodder <evinlodder@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/evinlodder/zdtwalk"
+readme = "README.md"
+keywords = ["zephyr", "devicetree", "dts", "tui", "embedded"]
+categories = ["command-line-utilities", "embedded"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

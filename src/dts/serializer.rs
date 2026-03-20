@@ -39,8 +39,10 @@ pub enum OutputFormat {
     /// Standard `.dts` output.
     Dts,
     /// Header/include fragment (`.dtsi`).
+    #[allow(dead_code)]
     Dtsi,
     /// Overlay (`.overlay` / `.dtso`) – adds `/plugin/;` automatically.
+    #[allow(dead_code)]
     Overlay,
 }
 

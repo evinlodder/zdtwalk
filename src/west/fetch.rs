@@ -6,7 +6,7 @@ use super::discovery::WorkspaceInfo;
 use super::error::WestError;
 use super::manifest::{self, ManifestContent, Project};
 use super::version;
-use crate::{tui_log, tui_warn, tui_error};
+use crate::{tui_log, tui_warn};
 
 /// Describes where a HAL project's DTS files were sourced from.
 #[derive(Debug, Clone, PartialEq, Eq)]

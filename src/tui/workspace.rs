@@ -24,6 +24,7 @@ pub struct WorkspaceState {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct FileEntry {
     pub path: PathBuf,
     pub name: String,
