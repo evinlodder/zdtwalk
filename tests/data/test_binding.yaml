@@ -1,0 +1,26 @@
+description: "STM32 I2C V2 controller"
+compatible: "st,stm32-i2c-v2"
+include:
+  - i2c-controller.yaml
+  - pinctrl-device.yaml
+
+properties:
+  reg:
+    required: true
+  interrupts:
+    required: true
+  pinctrl-0:
+    required: true
+  pinctrl-names:
+    required: true
+  timings:
+    type: array
+    description: "I2C bus timing configuration"
+  scl-gpios:
+    type: phandle-array
+  sda-gpios:
+    type: phandle-array
+  dmas:
+    type: phandle-array
+  dma-names:
+    type: string-array
